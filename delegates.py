@@ -798,7 +798,8 @@ class SpreadsheetDelegate(QStyledItemDelegate):
 
             # Calculate position for the arrow - place it closer to the right edge
             rect = option.rect
-            arrow_width = 12  # Even narrower arrow area
+            # Make the clickable area wider (20px) but keep the visual arrow small
+            arrow_width = 20  # Wider clickable area for easier interaction
             arrow_rect = QRect(rect.right() - arrow_width, rect.top(), arrow_width, rect.height())
 
             # Store the arrow rect for mouse click detection
@@ -815,7 +816,7 @@ class SpreadsheetDelegate(QStyledItemDelegate):
 
             # Calculate arrow points - tiny and elegant
             arrow_size = 3  # Tiny arrow
-            center_x = rect.right() - 6  # Position closer to the right edge
+            center_x = int(rect.right() - (arrow_width / 2))  # Center in the clickable area, convert to int
             center_y = rect.center().y()
 
             # Create a triangle pointing down

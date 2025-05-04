@@ -47,9 +47,10 @@ class ArrowComboBox(QComboBox):
 
         painter = QPainter(self)
 
-        # Calculate arrow position - closer to the edge
+        # Calculate arrow position - centered in clickable area
         rect = self.rect()
-        arrow_x = rect.right() - 8  # 8 pixels from right edge
+        arrow_width = 20  # Match the width in SpreadsheetDelegate
+        arrow_x = int(rect.right() - (arrow_width / 2))  # Center in the clickable area, convert to int
         arrow_y = rect.center().y()
 
         # Draw a simple down arrow (triangle) with a very minimal style

@@ -2464,13 +2464,27 @@ class ExpenseTrackerGUI(QMainWindow):
                             cell_pos = QPoint(pos.x() - cell_rect.left(), pos.y() - cell_rect.top())
                             arrow_rect = delegate.arrow_rects[(row, col)]
 
-                            # Check if click is within the arrow area
-                            if arrow_rect.contains(QPoint(cell_rect.right() - cell_pos.x(), cell_pos.y())):
+                            # Check if click is within the arrow area - use relative coordinates
+                            relative_x = cell_rect.right() - pos.x()
+                            if relative_x >= 0 and relative_x <= arrow_rect.width() and pos.y() >= cell_rect.top() and pos.y() <= cell_rect.bottom():
                                 click_on_arrow = True
 
-                        # If it's a dropdown column and not the empty row, start editing immediately
-                        # Also start editing if clicked directly on the arrow
-                        if (is_dropdown_column and row < empty_row_index) or click_on_arrow:
+                        # If clicked directly on the arrow, force immediate dropdown opening
+                        if click_on_arrow and row < empty_row_index:
+                            # First select the cell
+                            self.tbl.setCurrentCell(row, col)
+
+                            # Then immediately start editing and show dropdown
+                            editor = self.tbl.edit(idx)
+
+                            # If it's a QComboBox, show the dropdown
+                            if editor and isinstance(editor, QComboBox):
+                                editor.showPopup()
+
+                            return True  # Handled
+
+                        # Otherwise, if it's a dropdown column and not the empty row, just start editing
+                        elif is_dropdown_column and row < empty_row_index:
                             # Set current cell and start editing
                             self.tbl.setCurrentCell(row, col)
                             self.tbl.edit(idx)
