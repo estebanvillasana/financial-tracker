@@ -2075,8 +2075,10 @@ class ExpenseTrackerGUI(QMainWindow):
     def _debug_print_table(self):
         """Debug function to print the table contents to the terminal."""
         print("\n===== TABLE CONTENTS =====")
-        print(f"{'Row':<4} | {'Transaction Name':<20} | {'Value':<15} | {'Account':<20} | {'Type':<10} | {'Category':<20} | {'Sub Category':<20}")
-        print("-" * 120)
+        print(f"{'Row':<4} | {'Status':<12} | {'Transaction Name':<20} | {'Value':<15} | {'Account':<20} | {'Type':<10} | {'Category':<20} | {'Sub Category':<20}")
+        print("-" * 140)
+
+        num_transactions = len(self.transactions)
 
         for row in range(self.tbl.rowCount() - 1):  # Skip the '+' row
             row_data = []
@@ -2085,8 +2087,79 @@ class ExpenseTrackerGUI(QMainWindow):
                 text = item.text() if item else ""
                 row_data.append(text)
 
-            # Format the row data
-            print(f"{row:<4} | {row_data[0][:20]:<20} | {row_data[1][:15]:<15} | {row_data[2][:20]:<20} | {row_data[3][:10]:<10} | {row_data[4][:20]:<20} | {row_data[5][:20]:<20}")
+            # Determine row status with color indicators
+            status = ""
+            status_color = ""
+            if row < num_transactions:
+                # This is a saved transaction
+                transaction = self.transactions[row]
+                rowid = transaction.get('rowid')
+
+                # Check if this row is in the dirty set
+                is_dirty = False
+                if rowid in self.dirty:
+                    is_dirty = True
+                # Also check if any field in the row is different from the original
+                elif rowid in self._original_data_cache:
+                    original = self._original_data_cache.get(rowid, {})
+                    for key, value in transaction.items():
+                        if key.startswith('_') or key == 'rowid':
+                            continue
+                        if key in original and original[key] != value:
+                            is_dirty = True
+                            break
+
+                if is_dirty:
+                    status = "[MODIFIED]"
+                    status_color = "\033[33m"  # Yellow for modified
+                else:
+                    status = "[SAVED]"
+                    status_color = "\033[32m"  # Green for saved
+            else:
+                # This is a pending (new) transaction
+                status = "[NEW]"
+                status_color = "\033[36m"  # Cyan for new
+
+                # Check if it has validation errors
+                pending_idx = row - num_transactions
+                if pending_idx < len(self.pending):
+                    if self.pending[pending_idx].get('_has_error'):
+                        status = "[NEW/ERROR]"
+                        status_color = "\033[31m"  # Red for errors
+
+            # Add reset color code
+            status_with_color = f"{status_color}{status}\033[0m"
+
+            # Highlight modified fields in the table display
+            modified_fields = []
+            if row < num_transactions and self.transactions[row].get('rowid') in self.dirty:
+                rowid = self.transactions[row].get('rowid')
+                original = self._original_data_cache.get(rowid, {})
+
+                # Check which fields are modified
+                if original.get('transaction_name') != self.transactions[row].get('transaction_name'):
+                    modified_fields.append(0)  # Transaction Name column
+                if original.get('transaction_value') != self.transactions[row].get('transaction_value'):
+                    modified_fields.append(1)  # Value column
+                if original.get('account') != self.transactions[row].get('account'):
+                    modified_fields.append(2)  # Account column
+                if original.get('transaction_type') != self.transactions[row].get('transaction_type'):
+                    modified_fields.append(3)  # Type column
+                if original.get('category') != self.transactions[row].get('category'):
+                    modified_fields.append(4)  # Category column
+                if original.get('sub_category') != self.transactions[row].get('sub_category'):
+                    modified_fields.append(5)  # Sub Category column
+
+            # Format the row data with status and highlight modified fields
+            field_values = []
+            for i, value in enumerate(row_data[:6]):  # Only process the first 6 columns
+                if i in modified_fields:
+                    # Highlight modified fields with asterisks
+                    field_values.append(f"*{value[:18]}*" if i == 0 else f"*{value}*")
+                else:
+                    field_values.append(value[:20] if i == 0 else value)
+
+            print(f"{row:<4} | {status_with_color:<12} | {field_values[0]:<20} | {field_values[1]:<15} | {field_values[2]:<20} | {field_values[3]:<10} | {field_values[4]:<20} | {field_values[5]:<20}")
 
         print("========================\n")
 
@@ -2094,6 +2167,43 @@ class ExpenseTrackerGUI(QMainWindow):
         print("===== UNDERLYING DATA =====")
         all_data = self.transactions + self.pending
         for i, data in enumerate(all_data):
+            # Determine row status for data display with color indicators
+            status = ""
+            status_color = ""
+            if i < num_transactions:
+                rowid = data.get('rowid')
+
+                # Check if this row is in the dirty set
+                is_dirty = False
+                if rowid in self.dirty:
+                    is_dirty = True
+                # Also check if any field in the row is different from the original
+                elif rowid in self._original_data_cache:
+                    original = self._original_data_cache.get(rowid, {})
+                    for key, value in data.items():
+                        if key.startswith('_') or key == 'rowid':
+                            continue
+                        if key in original and original[key] != value:
+                            is_dirty = True
+                            break
+
+                if is_dirty:
+                    status = "[MODIFIED]"
+                    status_color = "\033[33m"  # Yellow for modified
+                else:
+                    status = "[SAVED]"
+                    status_color = "\033[32m"  # Green for saved
+            else:
+                # This is a pending (new) transaction
+                status = "[NEW]"
+                status_color = "\033[36m"  # Cyan for new
+                if data.get('_has_error'):
+                    status = "[NEW/ERROR]"
+                    status_color = "\033[31m"  # Red for errors
+
+            # Add reset color code
+            status_with_color = f"{status_color}{status}\033[0m"
+
             account_id = data.get('account_id')
             account_name = data.get('account')
             currency_info = None
@@ -2103,7 +2213,27 @@ class ExpenseTrackerGUI(QMainWindow):
                 except Exception as e:
                     print(f"Error getting currency for account {account_id}: {e}")
 
-            print(f"Row {i}: Account={account_name}, Account ID={account_id}, Currency={currency_info}")
+            # Include transaction value and status in the output
+            value = data.get('transaction_value', 'N/A')
+            print(f"Row {i} {status_with_color}: Account={account_name}, Account ID={account_id}, Value={value}, Currency={currency_info}")
+
+            # If the row is dirty or has errors, show what fields are modified or have errors
+            if is_dirty if i < num_transactions else False:
+                rowid = data.get('rowid')
+                original = self._original_data_cache.get(rowid, {})
+                changes = []
+                for key, value in data.items():
+                    if key.startswith('_') or key == 'rowid':
+                        continue
+                    if key in original and original[key] != value:
+                        changes.append(f"{key}: '{original[key]}' -> '{value}'")
+                if changes:
+                    print(f"  Changes: {', '.join(changes)}")
+
+            if data.get('_has_error'):
+                errors = data.get('_errors', {})
+                if errors:
+                    print(f"  Errors: {errors}")
 
         print("========================\n")
 
