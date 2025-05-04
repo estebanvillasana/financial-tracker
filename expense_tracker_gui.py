@@ -23,7 +23,7 @@ from database import Database
 from delegates import SpreadsheetDelegate
 from commands import CellEditCommand
 from column_config import TRANSACTION_COLUMNS, DB_FIELDS, DISPLAY_TITLES, get_column_config
-from custom_widgets import ArrowComboBox
+from custom_widgets import ArrowComboBox, ArrowDateEdit
 from custom_style import CustomProxyStyle
 
 class ExpenseTrackerGUI(QMainWindow):
@@ -118,11 +118,16 @@ class ExpenseTrackerGUI(QMainWindow):
                 border: none; /* No border */
             }
 
-            /* Hide the default down arrow for QComboBox */
+            /* Hide the default down arrow for QComboBox and QDateEdit */
             QComboBox::down-arrow, QDateEdit::down-arrow {
                 width: 0px;
                 height: 0px;
                 background: transparent;
+            }
+
+            /* Ensure date fields have the same styling as dropdowns */
+            QDateEdit {
+                padding-right: 15px; /* Space for our custom arrow */
             }
 
             /* Style the dropdown popup */
@@ -193,7 +198,8 @@ class ExpenseTrackerGUI(QMainWindow):
         # We're using ArrowComboBox which has its own styling
         # No need to set additional styles here
         self.desc_in = QLineEdit(placeholderText='Description')
-        self.date_in = QDateEdit(QDate.currentDate(), calendarPopup=True)
+        self.date_in = ArrowDateEdit(parent=self)
+        self.date_in.setDate(QDate.currentDate())
         self.date_in.setDisplayFormat("dd MMM yyyy")
 
         form_grid.addWidget(QLabel('Name:'), 0, 0)
@@ -2559,14 +2565,15 @@ class ExpenseTrackerGUI(QMainWindow):
                     row, col = idx.row(), idx.column()
                     empty_row_index = len(self.transactions) + len(self.pending)
 
-                    # Check if this is a dropdown column (Type, Category, Sub Category)
+                    # Check if this is a dropdown column or date column
                     if col < len(self.COLS):
                         col_key = self.COLS[col]
                         is_dropdown_column = col_key in ['transaction_type', 'category', 'sub_category', 'account']
+                        is_date_column = col_key == 'transaction_date'
 
-                        # Get the delegate to check if click is on arrow
+                        # Get the delegate to check if click is on arrow/icon
                         delegate = self.tbl.itemDelegate()
-                        click_on_arrow = False
+                        click_on_icon = False
 
                         if hasattr(delegate, 'arrow_rects') and (row, col) in delegate.arrow_rects:
                             # Convert pos to cell coordinates
@@ -2574,27 +2581,41 @@ class ExpenseTrackerGUI(QMainWindow):
                             cell_pos = QPoint(pos.x() - cell_rect.left(), pos.y() - cell_rect.top())
                             arrow_rect = delegate.arrow_rects[(row, col)]
 
-                            # Check if click is within the arrow area - use relative coordinates
+                            # Check if click is within the arrow/icon area - use relative coordinates
                             relative_x = cell_rect.right() - pos.x()
                             if relative_x >= 0 and relative_x <= arrow_rect.width() and pos.y() >= cell_rect.top() and pos.y() <= cell_rect.bottom():
-                                click_on_arrow = True
+                                click_on_icon = True
 
-                        # If clicked directly on the arrow, force immediate dropdown opening
-                        if click_on_arrow and row < empty_row_index:
+                        # If clicked directly on the arrow/icon, force immediate dropdown/calendar opening
+                        if click_on_icon and row < empty_row_index:
                             # First select the cell
                             self.tbl.setCurrentCell(row, col)
 
-                            # Then immediately start editing and show dropdown
+                            # Then immediately start editing
                             editor = self.tbl.edit(idx)
 
                             # If it's a QComboBox, show the dropdown
                             if editor and isinstance(editor, QComboBox):
                                 editor.showPopup()
+                            # If it's a QDateEdit or ArrowDateEdit, show the calendar
+                            elif editor and (isinstance(editor, QDateEdit) or isinstance(editor, ArrowDateEdit)):
+                                # Make sure calendar popup is enabled
+                                editor.setCalendarPopup(True)
+
+                                # Force the calendar to show
+                                # We need to use a timer to ensure the calendar shows properly
+                                def show_calendar():
+                                    # Simply call the showPopup method which will display the calendar
+                                    # The calendar widget is already configured in the createEditor method
+                                    editor.showPopup()
+
+                                # Use a short timer to ensure the editor is fully initialized
+                                QTimer.singleShot(10, show_calendar)
 
                             return True  # Handled
 
-                        # Otherwise, if it's a dropdown column and not the empty row, just start editing
-                        elif is_dropdown_column and row < empty_row_index:
+                        # Otherwise, if it's a dropdown/date column and not the empty row, just start editing
+                        elif (is_dropdown_column or is_date_column) and row < empty_row_index:
                             # Set current cell and start editing
                             self.tbl.setCurrentCell(row, col)
                             self.tbl.edit(idx)

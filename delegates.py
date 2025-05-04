@@ -5,8 +5,8 @@ from PyQt6.QtWidgets import (QStyledItemDelegate, QWidget, QComboBox,
 from PyQt6.QtCore import Qt, QModelIndex, QDate, QLocale, QTimer
 from PyQt6.QtGui import QIcon
 
-# Import our custom ArrowComboBox
-from custom_widgets import ArrowComboBox
+# Import our custom widgets
+from custom_widgets import ArrowComboBox, ArrowDateEdit
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from commands import CellEditCommand
@@ -30,7 +30,7 @@ class SpreadsheetDelegate(QStyledItemDelegate):
 
         # CSS style for dropdowns to ensure arrows are visible
         self.dropdown_style = """
-            QComboBox, ArrowComboBox {
+            QComboBox, ArrowComboBox, QDateEdit {
                 background-color: #2d323b;
                 color: #f3f3f3;
                 border: 1px solid #444;
@@ -39,12 +39,18 @@ class SpreadsheetDelegate(QStyledItemDelegate):
                 padding-right: 15px;
                 min-height: 20px;
             }
-            QComboBox::drop-down, ArrowComboBox::drop-down {
+            QComboBox::drop-down, ArrowComboBox::drop-down, QDateEdit::drop-down {
                 subcontrol-origin: padding;
                 subcontrol-position: top right;
                 width: 12px;
                 background: transparent;
                 border: none;
+            }
+            /* Hide the default down arrow for QDateEdit */
+            QDateEdit::down-arrow {
+                width: 0px;
+                height: 0px;
+                background: transparent;
             }
         """
 
@@ -102,11 +108,38 @@ class SpreadsheetDelegate(QStyledItemDelegate):
             editor.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter) # Align numbers right
             return editor
         elif col_key == 'transaction_date':
-            editor = QDateEdit(parent, calendarPopup=True)
-            editor.setDisplayFormat("yyyy-MM-dd") # Store in ISO format
+            # Use our custom ArrowDateEdit which handles all the styling and behavior
+            editor = ArrowDateEdit(parent)
+
+            # Get the current value from the model
+            value = index.model().data(index, Qt.ItemDataRole.EditRole)
+
+            # Set the date format to match the display format
+            editor.setDisplayFormat("dd MMM yyyy") # More user-friendly format
+
             # Set locale for calendar widget appearance if desired
             editor.setLocale(self.locale)
-            editor.setDate(QDate.currentDate()) # Default to today
+
+            # Set the date to the current value in the model, or today if no value
+            if isinstance(value, str) and len(value) == 10 and value.count('-') == 2:
+                date_val = QDate.fromString(value, "yyyy-MM-dd")
+                if date_val.isValid():
+                    editor.setDate(date_val)
+                else:
+                    editor.setDate(QDate.currentDate())
+            else:
+                editor.setDate(QDate.currentDate())
+
+            # Set a reasonable date range
+            current_year = QDate.currentDate().year()
+            editor.setDateRange(
+                QDate(current_year - 10, 1, 1),  # 10 years ago
+                QDate(current_year + 10, 12, 31)  # 10 years in the future
+            )
+
+            # Show dropdown immediately when editor is created
+            QTimer.singleShot(0, editor.showPopup)
+
             return editor
         elif col_key == 'account':
             editor = ArrowComboBox(parent)
@@ -367,13 +400,23 @@ class SpreadsheetDelegate(QStyledItemDelegate):
                      editor.setCurrentIndex(0)
                      # print(f"Warning: Value '{value}' not found in ComboBox for {col_key}. Setting to index 0.")
 
-        elif isinstance(editor, QDateEdit):
+        elif isinstance(editor, QDateEdit) or isinstance(editor, ArrowDateEdit):
             if isinstance(value, str):
+                # Try parsing the date in ISO format first (how it's stored in the database)
                 date_val = QDate.fromString(value, "yyyy-MM-dd")
                 if date_val.isValid():
                     editor.setDate(date_val)
                 else:
-                    editor.setDate(QDate.currentDate()) # Fallback
+                    # Try other common formats as fallback
+                    date_formats = ["dd MMM yyyy", "MM/dd/yyyy", "dd/MM/yyyy"]
+                    for fmt in date_formats:
+                        date_val = QDate.fromString(value, fmt)
+                        if date_val.isValid():
+                            editor.setDate(date_val)
+                            break
+                    else:
+                        # If all formats fail, use current date as last resort
+                        editor.setDate(QDate.currentDate())
             elif isinstance(value, QDate):
                 editor.setDate(value) # If model stores QDate directly
             else:
@@ -788,15 +831,15 @@ class SpreadsheetDelegate(QStyledItemDelegate):
         if self.parent_window and hasattr(self.parent_window, 'COLS') and col < len(self.parent_window.COLS):
             col_key = self.parent_window.COLS[col]
 
-        # Draw dropdown arrows for combo box columns
-        if col_key in ['account', 'transaction_type', 'category', 'sub_category']:
+        # Draw dropdown arrows for combo box columns or calendar icon for date column
+        if col_key in ['account', 'transaction_type', 'category', 'sub_category', 'transaction_date']:
             from PyQt6.QtGui import QColor, QPen, QPolygon, QBrush
             from PyQt6.QtCore import QPoint, QRect
 
             # Save painter state
             painter.save()
 
-            # Calculate position for the arrow - place it closer to the right edge
+            # Calculate position for the arrow/icon - place it closer to the right edge
             rect = option.rect
             # Make the clickable area wider (20px) but keep the visual arrow small
             arrow_width = 20  # Wider clickable area for easier interaction
@@ -808,26 +851,67 @@ class SpreadsheetDelegate(QStyledItemDelegate):
                 self.arrow_rects = {}
             self.arrow_rects[(index.row(), index.column())] = arrow_rect
 
-            # No background - completely transparent
+            # Check if this cell is being edited
+            is_editing = False
+            if self.parent_window and hasattr(self.parent_window, 'tbl'):
+                current_index = self.parent_window.tbl.currentIndex()
+                if current_index.isValid() and current_index.row() == index.row() and current_index.column() == index.column():
+                    editor = self.parent_window.tbl.indexWidget(current_index)
+                    is_editing = editor is not None
 
-            # Draw the arrow with a very subtle style
-            painter.setPen(QPen(QColor(150, 150, 150)))  # Even lighter gray for a more subtle look
-            painter.setBrush(QBrush(QColor(150, 150, 150)))
+            # Only draw the icon if the cell is not being edited
+            # This ensures the icon stays visible when the cell is selected but not in edit mode
+            if not is_editing:
+                if col_key == 'transaction_date':
+                    # Draw a simple calendar icon that fits within the cell
+                    painter.setPen(QPen(QColor(150, 150, 150)))  # Light gray for a subtle look
+                    painter.setBrush(Qt.BrushStyle.NoBrush)  # No fill
 
-            # Calculate arrow points - tiny and elegant
-            arrow_size = 3  # Tiny arrow
-            center_x = int(rect.right() - (arrow_width / 2))  # Center in the clickable area, convert to int
-            center_y = rect.center().y()
+                    # Calculate icon position
+                    center_x = int(rect.right() - (arrow_width / 2))  # Center in the clickable area
+                    center_y = rect.center().y()
 
-            # Create a triangle pointing down
-            arrow = QPolygon([
-                QPoint(center_x - arrow_size, int(center_y - arrow_size/2)),
-                QPoint(center_x + arrow_size, int(center_y - arrow_size/2)),
-                QPoint(center_x, center_y + arrow_size)
-            ])
+                    # Draw a very small calendar icon
+                    icon_size = 4  # Very small icon to fit in the cell
 
-            # Draw the arrow
-            painter.drawPolygon(arrow)
+                    # Calendar outline - just a small rectangle
+                    calendar_rect = QRect(
+                        center_x - icon_size,
+                        center_y - icon_size,
+                        icon_size * 2,
+                        icon_size * 2
+                    )
+
+                    # Draw the calendar outline
+                    painter.drawRect(calendar_rect)
+
+                    # Draw a small line at the top to represent the calendar header
+                    header_y = center_y - icon_size + 1
+                    painter.drawLine(
+                        center_x - icon_size,
+                        header_y,
+                        center_x + icon_size,
+                        header_y
+                    )
+                else:
+                    # Draw the arrow with a very subtle style
+                    painter.setPen(QPen(QColor(150, 150, 150)))  # Even lighter gray for a more subtle look
+                    painter.setBrush(QBrush(QColor(150, 150, 150)))
+
+                    # Calculate arrow points - tiny and elegant
+                    arrow_size = 3  # Tiny arrow
+                    center_x = int(rect.right() - (arrow_width / 2))  # Center in the clickable area, convert to int
+                    center_y = rect.center().y()
+
+                    # Create a triangle pointing down
+                    arrow = QPolygon([
+                        QPoint(center_x - arrow_size, int(center_y - arrow_size/2)),
+                        QPoint(center_x + arrow_size, int(center_y - arrow_size/2)),
+                        QPoint(center_x, center_y + arrow_size)
+                    ])
+
+                    # Draw the arrow
+                    painter.drawPolygon(arrow)
 
             # Restore painter state
             painter.restore()
