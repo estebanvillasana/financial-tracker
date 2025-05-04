@@ -10,7 +10,7 @@ class ArrowComboBox(QComboBox):
         # Set a property to help with styling
         self.setProperty("hasCustomArrow", True)
 
-        # Basic styling
+        # Basic styling - no border for dropdown button
         self.setStyleSheet("""
             ArrowComboBox {
                 background-color: #2d323b;
@@ -18,22 +18,22 @@ class ArrowComboBox(QComboBox):
                 border: 1px solid #444;
                 border-radius: 4px;
                 padding: 6px;
-                padding-right: 28px;
+                padding-right: 15px;
                 min-height: 20px;
             }
 
             ArrowComboBox::drop-down {
                 subcontrol-origin: padding;
                 subcontrol-position: top right;
-                width: 24px;
-                border-left: 1px solid #555;
+                width: 12px;
                 background: transparent;
+                border: none;
             }
 
             ArrowComboBox::down-arrow {
                 image: none;
-                width: 14px;
-                height: 14px;
+                width: 0px;
+                height: 0px;
             }
         """)
 
@@ -46,23 +46,23 @@ class ArrowComboBox(QComboBox):
         from PyQt6.QtCore import QPoint
 
         painter = QPainter(self)
-        painter.setPen(QPen(QColor(255, 255, 255)))  # White color
 
-        # Calculate arrow position
+        # Calculate arrow position - closer to the edge
         rect = self.rect()
-        arrow_x = rect.right() - 15  # 15 pixels from right edge
+        arrow_x = rect.right() - 8  # 8 pixels from right edge
         arrow_y = rect.center().y()
 
-        # Draw a simple down arrow (triangle)
-        arrow_size = 5
+        # Draw a simple down arrow (triangle) with a very minimal style
+        arrow_size = 3  # Tiny arrow
 
         # Create a polygon for the arrow
         arrow = QPolygon([
-            QPoint(arrow_x - arrow_size, arrow_y - arrow_size),
-            QPoint(arrow_x + arrow_size, arrow_y - arrow_size),
+            QPoint(arrow_x - arrow_size, int(arrow_y - arrow_size/2)),
+            QPoint(arrow_x + arrow_size, int(arrow_y - arrow_size/2)),
             QPoint(arrow_x, arrow_y + arrow_size)
         ])
 
-        # Fill the arrow
-        painter.setBrush(QColor(255, 255, 255))  # White fill
+        # Fill the arrow with a more subtle color
+        painter.setPen(QPen(QColor(150, 150, 150)))  # Even lighter gray
+        painter.setBrush(QColor(150, 150, 150))  # Even lighter gray fill
         painter.drawPolygon(arrow)

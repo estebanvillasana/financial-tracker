@@ -28,7 +28,25 @@ class SpreadsheetDelegate(QStyledItemDelegate):
         # Fallback icon - stylesheet should override
         self.down_arrow_icon = QIcon.fromTheme("go-down", QIcon(":/icons/down-arrow.png")) # Keep if you have resources
 
-        # We're using ArrowComboBox which draws its own arrow
+        # CSS style for dropdowns to ensure arrows are visible
+        self.dropdown_style = """
+            QComboBox, ArrowComboBox {
+                background-color: #2d323b;
+                color: #f3f3f3;
+                border: 1px solid #444;
+                border-radius: 4px;
+                padding: 6px;
+                padding-right: 15px;
+                min-height: 20px;
+            }
+            QComboBox::drop-down, ArrowComboBox::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 12px;
+                background: transparent;
+                border: none;
+            }
+        """
 
         # Store references to the main GUI data needed for dropdowns
         # These will be populated by the main GUI after initialization
@@ -759,6 +777,59 @@ class SpreadsheetDelegate(QStyledItemDelegate):
     def updateEditorGeometry(self, editor, option, index):
         # Default geometry is usually fine
         editor.setGeometry(option.rect)
+
+    def paint(self, painter, option, index):
+        # First, let the default implementation draw the cell
+        super().paint(painter, option, index)
+
+        # Get the column key to determine if this is a dropdown cell
+        col = index.column()
+        col_key = None
+        if self.parent_window and hasattr(self.parent_window, 'COLS') and col < len(self.parent_window.COLS):
+            col_key = self.parent_window.COLS[col]
+
+        # Draw dropdown arrows for combo box columns
+        if col_key in ['account', 'transaction_type', 'category', 'sub_category']:
+            from PyQt6.QtGui import QColor, QPen, QPolygon, QBrush
+            from PyQt6.QtCore import QPoint, QRect
+
+            # Save painter state
+            painter.save()
+
+            # Calculate position for the arrow - place it closer to the right edge
+            rect = option.rect
+            arrow_width = 12  # Even narrower arrow area
+            arrow_rect = QRect(rect.right() - arrow_width, rect.top(), arrow_width, rect.height())
+
+            # Store the arrow rect for mouse click detection
+            # We'll use this in the event filter to detect clicks on the arrow
+            if not hasattr(self, 'arrow_rects'):
+                self.arrow_rects = {}
+            self.arrow_rects[(index.row(), index.column())] = arrow_rect
+
+            # No background - completely transparent
+
+            # Draw the arrow with a very subtle style
+            painter.setPen(QPen(QColor(150, 150, 150)))  # Even lighter gray for a more subtle look
+            painter.setBrush(QBrush(QColor(150, 150, 150)))
+
+            # Calculate arrow points - tiny and elegant
+            arrow_size = 3  # Tiny arrow
+            center_x = rect.right() - 6  # Position closer to the right edge
+            center_y = rect.center().y()
+
+            # Create a triangle pointing down
+            arrow = QPolygon([
+                QPoint(center_x - arrow_size, int(center_y - arrow_size/2)),
+                QPoint(center_x + arrow_size, int(center_y - arrow_size/2)),
+                QPoint(center_x, center_y + arrow_size)
+            ])
+
+            # Draw the arrow
+            painter.drawPolygon(arrow)
+
+            # Restore painter state
+            painter.restore()
 
     def displayText(self, value, locale) -> str:
         # This method formats the data for display in the table *when not editing*.

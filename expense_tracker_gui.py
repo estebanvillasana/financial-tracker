@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QGridLayout, QGroupBox, QDateEdit, QToolButton,
                              QStyle, QToolBar, QTableWidgetSelectionRange)
 # Import QEvent for eventFilter
-from PyQt6.QtCore import Qt, QTimer, QDate, QModelIndex, QSize, QLocale, QEvent
+from PyQt6.QtCore import Qt, QTimer, QDate, QModelIndex, QSize, QLocale, QEvent, QPoint
 # Import QIcon
 from PyQt6.QtGui import (QKeySequence, QShortcut, QColor, QFont, QIcon,
                          QKeyEvent, QUndoStack, QGuiApplication)
@@ -104,7 +104,7 @@ class ExpenseTrackerGUI(QMainWindow):
                 border: 1px solid #444;
                 border-radius: 4px;
                 padding: 6px;
-                padding-right: 28px; /* Extra padding for the arrow */
+                padding-right: 15px; /* Minimal padding for the arrow */
                 min-height: 20px;
             }
 
@@ -112,15 +112,15 @@ class ExpenseTrackerGUI(QMainWindow):
             QComboBox::drop-down, QDateEdit::drop-down {
                 subcontrol-origin: padding;
                 subcontrol-position: top right;
-                width: 24px; /* Width of the clickable area */
-                border-left: 1px solid #555; /* Light separator */
+                width: 12px; /* Minimal width of the clickable area */
                 background: transparent;
+                border: none; /* No border */
             }
 
-            /* Always show a down arrow for QComboBox */
+            /* Hide the default down arrow for QComboBox */
             QComboBox::down-arrow, QDateEdit::down-arrow {
-                width: 14px;
-                height: 14px;
+                width: 0px;
+                height: 0px;
                 background: transparent;
             }
 
@@ -2454,8 +2454,23 @@ class ExpenseTrackerGUI(QMainWindow):
                         col_key = self.COLS[col]
                         is_dropdown_column = col_key in ['transaction_type', 'category', 'sub_category', 'account']
 
+                        # Get the delegate to check if click is on arrow
+                        delegate = self.tbl.itemDelegate()
+                        click_on_arrow = False
+
+                        if hasattr(delegate, 'arrow_rects') and (row, col) in delegate.arrow_rects:
+                            # Convert pos to cell coordinates
+                            cell_rect = self.tbl.visualRect(idx)
+                            cell_pos = QPoint(pos.x() - cell_rect.left(), pos.y() - cell_rect.top())
+                            arrow_rect = delegate.arrow_rects[(row, col)]
+
+                            # Check if click is within the arrow area
+                            if arrow_rect.contains(QPoint(cell_rect.right() - cell_pos.x(), cell_pos.y())):
+                                click_on_arrow = True
+
                         # If it's a dropdown column and not the empty row, start editing immediately
-                        if is_dropdown_column and row < empty_row_index:
+                        # Also start editing if clicked directly on the arrow
+                        if (is_dropdown_column and row < empty_row_index) or click_on_arrow:
                             # Set current cell and start editing
                             self.tbl.setCurrentCell(row, col)
                             self.tbl.edit(idx)
