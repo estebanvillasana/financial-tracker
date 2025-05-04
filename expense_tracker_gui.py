@@ -22,6 +22,7 @@ from database import Database
 from delegates import SpreadsheetDelegate
 from commands import CellEditCommand
 from column_config import TRANSACTION_COLUMNS, DB_FIELDS, DISPLAY_TITLES, get_column_config
+from custom_widgets import ArrowComboBox
 
 class ExpenseTrackerGUI(QMainWindow):
     # Define the columns for the *display* table (match the data we'll fetch)
@@ -89,24 +90,22 @@ class ExpenseTrackerGUI(QMainWindow):
             QLineEdit, QComboBox, QDateEdit, QDateEdit QAbstractItemView {
                 background:#2d323b; color:#f3f3f3;
                 border:1px solid #444; border-radius:4px; padding:6px; }
-            QComboBox::drop-down, QDateEdit::drop-down {
+            /* We're using ArrowComboBox which draws its own arrow */
+            QDateEdit::drop-down {
                 /* Define the area for the arrow */
                 subcontrol-origin: padding;
                 subcontrol-position: top right;
                 width: 20px; /* Width of the clickable area */
                 border-left: 1.5px solid #444; /* Visual separator */
-                /* border-radius: 4px; */ /* Optional: match main border radius */
-                background: transparent; /* Let the arrow image show */
+                background: transparent;
             }
-            /* Style the arrow image itself */
-            QComboBox::down-arrow, QDateEdit::down-arrow {
-                image: url(data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path fill='%23ffffff' d='M2 4l4 4 4-4'/></svg>);
-                width: 14px; /* Size of the image */
+            /* Style the arrow image for QDateEdit */
+            QDateEdit::down-arrow {
+                width: 14px;
                 height: 14px;
-                /* Position inside the drop-down area */
-                position: relative; /* Changed from absolute */
-                top: 1px; /* Adjust slightly for centering if needed */
-                right: -2px; /* Adjust slightly for centering if needed */
+                color: white;
+                font-size: 12px;
+                font-weight: bold;
             }
             QComboBox QAbstractItemView {
                 background-color: #2d323b;
@@ -154,15 +153,23 @@ class ExpenseTrackerGUI(QMainWindow):
 
         self.name_in = QLineEdit(placeholderText='Transaction Name')
         self.value_in = QLineEdit(placeholderText='Value (e.g., 12.34)')
-        self.type_in = QComboBox()
+        self.type_in = ArrowComboBox()
         self.type_in.addItems(['Expense', 'Income'])
         self.type_in.setPlaceholderText('Type')
-        self.account_in = QComboBox()
+        self.account_in = ArrowComboBox()
         self.account_in.setPlaceholderText('Select Account')
-        self.cat_in = QComboBox()
+        self.cat_in = ArrowComboBox()
         self.cat_in.setPlaceholderText('Select Category')
-        self.subcat_in = QComboBox()
+        self.subcat_in = ArrowComboBox()
         self.subcat_in.setPlaceholderText('Select Sub Category')
+
+        # We're using ArrowComboBox which draws its own arrow
+        # Ensure dropdowns don't show blank options
+        dropdown_style = """
+            QComboBox::item:first { height: 0px; margin: 0px; padding: 0px; }
+        """
+        for dropdown in [self.type_in, self.account_in, self.cat_in, self.subcat_in]:
+            dropdown.setStyleSheet(dropdown_style)
         self.desc_in = QLineEdit(placeholderText='Description')
         self.date_in = QDateEdit(QDate.currentDate(), calendarPopup=True)
         self.date_in.setDisplayFormat("dd MMM yyyy")
@@ -243,6 +250,7 @@ class ExpenseTrackerGUI(QMainWindow):
             else:
                 # Use stretch mode for columns without specific width
                 self.tbl.horizontalHeader().setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Stretch)
+        # Set edit triggers - we'll handle single-click for dropdowns in eventFilter
         self.tbl.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked |
                                QAbstractItemView.EditTrigger.EditKeyPressed)
         self.tbl.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
@@ -2410,6 +2418,26 @@ class ExpenseTrackerGUI(QMainWindow):
                         QTimer.singleShot(0, lambda char=text: self._replace_editor_content(char))
                         return True # Handled
                     # else: Already editing, let editor handle the input
+
+            # --- Mouse Click ---
+            elif event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                pos = event.position().toPoint()
+                idx = self.tbl.indexAt(pos)
+                if idx.isValid():
+                    row, col = idx.row(), idx.column()
+                    empty_row_index = len(self.transactions) + len(self.pending)
+
+                    # Check if this is a dropdown column (Type, Category, Sub Category)
+                    if col < len(self.COLS):
+                        col_key = self.COLS[col]
+                        is_dropdown_column = col_key in ['transaction_type', 'category', 'sub_category', 'account']
+
+                        # If it's a dropdown column and not the empty row, start editing immediately
+                        if is_dropdown_column and row < empty_row_index:
+                            # Set current cell and start editing
+                            self.tbl.setCurrentCell(row, col)
+                            self.tbl.edit(idx)
+                            return True  # Handled
 
             # --- Double-Click ---
             elif event.type() == QEvent.Type.MouseButtonDblClick:

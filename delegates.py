@@ -1,10 +1,12 @@
 # --- START OF FILE delegates.py ---
 
 from PyQt6.QtWidgets import (QStyledItemDelegate, QWidget, QComboBox,
-                             QDateEdit, QLineEdit, QStyleOptionComboBox,
-                             QStyle, QApplication)
+                             QDateEdit, QLineEdit)
 from PyQt6.QtCore import Qt, QModelIndex, QDate, QLocale, QTimer
-from PyQt6.QtGui import QColor, QIcon, QDoubleValidator # QDoubleValidator might not be flexible enough for locale
+from PyQt6.QtGui import QIcon
+
+# Import our custom ArrowComboBox
+from custom_widgets import ArrowComboBox
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from commands import CellEditCommand
@@ -25,6 +27,8 @@ class SpreadsheetDelegate(QStyledItemDelegate):
 
         # Fallback icon - stylesheet should override
         self.down_arrow_icon = QIcon.fromTheme("go-down", QIcon(":/icons/down-arrow.png")) # Keep if you have resources
+
+        # We're using ArrowComboBox which draws its own arrow
 
         # Store references to the main GUI data needed for dropdowns
         # These will be populated by the main GUI after initialization
@@ -87,7 +91,7 @@ class SpreadsheetDelegate(QStyledItemDelegate):
             editor.setDate(QDate.currentDate()) # Default to today
             return editor
         elif col_key == 'account':
-            editor = QComboBox(parent)
+            editor = ArrowComboBox(parent)
             editor.setEditable(False)
             # Don't add empty item, just populate with accounts
             for acc in self.accounts_list:
@@ -96,9 +100,12 @@ class SpreadsheetDelegate(QStyledItemDelegate):
                 editor.addItem("No Accounts Available")
                 editor.model().item(0).setEnabled(False) # Disable the message item
                 editor.setEnabled(False)
+
+            # Show dropdown immediately when editor is created
+            QTimer.singleShot(0, editor.showPopup)
             return editor
         elif col_key == 'transaction_type':
-            editor = QComboBox(parent)
+            editor = ArrowComboBox(parent)
             editor.setEditable(False)
             editor.addItem('Expense', userData='Expense')
             editor.addItem('Income', userData='Income')
@@ -110,10 +117,12 @@ class SpreadsheetDelegate(QStyledItemDelegate):
                 if index >= 0:
                     editor.setCurrentIndex(index)
 
+            # Show dropdown immediately when editor is created
+            QTimer.singleShot(0, editor.showPopup)
             return editor
 
         elif col_key == 'category':
-            editor = QComboBox(parent)
+            editor = ArrowComboBox(parent)
             editor.setEditable(False)
             # Filter categories based on the current row's transaction type
             current_type = 'Expense' # Default assumption
@@ -148,9 +157,13 @@ class SpreadsheetDelegate(QStyledItemDelegate):
                 editor.addItem(f"No {current_type} Categories")
                 editor.model().item(0).setEnabled(False)
                 editor.setEnabled(False)
+            # Apply custom style to ensure arrow is visible
+            editor.setStyleSheet(self.dropdown_style)
+            # Show dropdown immediately when editor is created
+            QTimer.singleShot(0, editor.showPopup)
             return editor
         elif col_key == 'sub_category':
-            editor = QComboBox(parent)
+            editor = ArrowComboBox(parent)
             editor.setEditable(False)
             # Filter subcategories based on the current row's category ID
             current_category_id = None
@@ -231,6 +244,10 @@ class SpreadsheetDelegate(QStyledItemDelegate):
                 editor.model().item(0).setEnabled(False)
                 editor.setEnabled(False if current_category_id is None else True) # Enable if category is selected but no subcats exist
 
+            # Apply custom style to ensure arrow is visible
+            editor.setStyleSheet(self.dropdown_style)
+            # Show dropdown immediately when editor is created
+            QTimer.singleShot(0, editor.showPopup)
             return editor
         elif col_key in ['transaction_name', 'transaction_description']:
             # Default editor (QLineEdit) is fine for text fields
