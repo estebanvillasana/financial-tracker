@@ -1,0 +1,11 @@
+{
+    "TABLE_DISPLAY": false,
+    "UNDERLYING_DATA": false,
+    "DATE_ARROWS": false,
+    "ACCOUNT_CONVERSION": false,
+    "SUBCATEGORY": false,
+    "CURRENCY": false,
+    "DROPDOWN": false,
+    "FOREIGN_KEYS": false,
+    "CLICK_DETECTION": false
+}

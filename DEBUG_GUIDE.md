@@ -39,6 +39,9 @@ The debug menu provides the following options:
 2. **Enable all categories**: Enable all debug categories at once.
 3. **Disable all categories**: Disable all debug categories at once.
 4. **Return to application**: Close the debug menu and return to the application.
+5. **Exit program**: Save settings and exit the program completely.
+
+Your debug settings are automatically saved when you make changes and will be remembered between program runs.
 
 ## Default Configuration
 
