@@ -1054,9 +1054,14 @@ class ExpenseTrackerGUI(QMainWindow):
 
                     if valid_data:
                         updates_to_execute.append((
-                            valid_data['transaction_name'], float(valid_data['transaction_value']), valid_data['transaction_category'], # Use transaction_category
-                            valid_data['transaction_description'], valid_data['transaction_date'],
-                            # Removed type, account_id, sub_category_id
+                            valid_data['transaction_name'],
+                            float(valid_data['transaction_value']),
+                            valid_data['account_id'],  # Include account_id for updates
+                            valid_data['transaction_type'],  # Include transaction_type for updates
+                            valid_data['transaction_category'],
+                            valid_data['transaction_sub_category'],  # Include sub_category for updates
+                            valid_data['transaction_description'],
+                            valid_data['transaction_date'],
                             rowid # rowid for WHERE clause
                         ))
                         dirty_rowids_that_passed_validation.add(rowid)
@@ -1089,9 +1094,10 @@ class ExpenseTrackerGUI(QMainWindow):
                  if updates_to_execute:
                      self.db.conn.executemany('''
                          UPDATE transactions
-                            SET transaction_name=?, transaction_value=?, transaction_category=?, transaction_description=?, transaction_date=?
+                            SET transaction_name=?, transaction_value=?, account_id=?, transaction_type=?,
+                                transaction_category=?, transaction_sub_category=?, transaction_description=?, transaction_date=?
                           WHERE rowid=?
-                     ''', updates_to_execute) # Reverted to original columns and WHERE rowid
+                     ''', updates_to_execute) # Updated to include all columns
 
                  self.db.conn.commit()
                  commit_successful = True
@@ -1542,8 +1548,8 @@ class ExpenseTrackerGUI(QMainWindow):
                 self.undo_stack.push(cmd) # Pushing runs redo(), which updates data and UI
             self.undo_stack.endMacro()
 
-            # Redo already calls _recolor_row and _update_button_states
-            # No extra UI updates should be needed here.
+            # Explicitly refresh the UI to ensure pasted data is visible
+            self._refresh()
 
             self._show_message(f"Pasted data into {len(affected_rows_cols)} cell(s).", error=False)
         else:
