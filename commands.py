@@ -137,7 +137,19 @@ class CellEditCommand(QUndoCommand):
             target_value_name = self._find_name_for_id('account', target_value_id)
             self.target_data_dict['account_id'] = target_value_id
             self.target_data_dict['account'] = target_value_name
-            # print(f"DEBUG _update_data: Updated account_id={target_value_id}, account='{target_value_name}'")
+            print(f"DEBUG _update_data: Updated account_id={target_value_id}, account='{target_value_name}'")
+
+            # Update the UI to reflect the account change
+            account_col = self.main_window.COLS.index('account')
+            if self.row < self.main_window.tbl.rowCount():
+                item = self.main_window.tbl.item(self.row, account_col)
+                if item:
+                    item.setText(target_value_name)
+                    print(f"DEBUG _update_data: Updated UI cell text to '{target_value_name}'")
+
+                    # Update the currency display for the transaction value
+                    self.main_window._update_currency_display_for_row(self.row)
+                    print(f"DEBUG _update_data: Updated currency display for row {self.row}")
         elif self.col_key == 'transaction_type':
             # Handle transaction type change
             self.target_data_dict['transaction_type'] = value_to_set

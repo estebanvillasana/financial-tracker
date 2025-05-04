@@ -1704,9 +1704,89 @@ class ExpenseTrackerGUI(QMainWindow):
                                 amount_val, ok = self.locale.toFloat(new_value)
                                 if ok: new_value = amount_val
                                 else: new_value = old_value # Revert if invalid amount format
-                            # No specific conversion needed for date/category/text here,
+                            # Handle account column - convert account name to account_id
+                            elif col_key == 'account':
+                                # Check if the pasted value is an account name
+                                account_id = None
+                                for acc in self._accounts_data:
+                                    if acc['name'] == new_value:
+                                        account_id = acc['id']
+                                        break
+
+                                if account_id is not None:
+                                    # Use the account ID instead of the name
+                                    new_value = account_id
+                                    print(f"DEBUG PASTE: Converted account name '{value_str}' to ID {account_id}")
+                                else:
+                                    # If account name not found, keep original value
+                                    new_value = old_value
+                                    print(f"DEBUG PASTE: Account name '{value_str}' not found, keeping original value")
+                            # Handle category column - convert category name to category_id
+                            elif col_key == 'category':
+                                # Get the transaction type for context
+                                transaction_type = None
+                                if is_pending:
+                                    pending_index = target_row - num_transactions
+                                    if 0 <= pending_index < len(self.pending):
+                                        transaction_type = self.pending[pending_index].get('transaction_type', 'Expense')
+                                else:
+                                    if 0 <= target_row < num_transactions:
+                                        transaction_type = self.transactions[target_row].get('transaction_type', 'Expense')
+
+                                if not transaction_type:
+                                    transaction_type = 'Expense'  # Default
+
+                                # Find category ID for the given name and transaction type
+                                category_id = None
+                                for cat in self._categories_data:
+                                    if cat['name'] == new_value and cat['type'] == transaction_type:
+                                        category_id = cat['id']
+                                        break
+
+                                if category_id is not None:
+                                    # Use the category ID instead of the name
+                                    new_value = category_id
+                                    print(f"DEBUG PASTE: Converted category name '{value_str}' to ID {category_id}")
+                                else:
+                                    # If category name not found, keep original value
+                                    new_value = old_value
+                                    print(f"DEBUG PASTE: Category name '{value_str}' not found for type {transaction_type}, keeping original value")
+                            # Handle subcategory column - convert subcategory name to subcategory_id
+                            elif col_key == 'sub_category':
+                                # Get the category ID for context
+                                category_id = None
+                                if is_pending:
+                                    pending_index = target_row - num_transactions
+                                    if 0 <= pending_index < len(self.pending):
+                                        category_id = self.pending[pending_index].get('category_id')
+                                else:
+                                    if 0 <= target_row < num_transactions:
+                                        category_id = self.transactions[target_row].get('category_id')
+
+                                if category_id is not None:
+                                    # Find subcategory ID for the given name and category ID
+                                    subcategory_id = None
+                                    for subcat in self._subcategories_data:
+                                        if subcat['name'] == new_value and subcat['category_id'] == category_id:
+                                            subcategory_id = subcat['id']
+                                            break
+
+                                    if subcategory_id is not None:
+                                        # Use the subcategory ID instead of the name
+                                        new_value = subcategory_id
+                                        print(f"DEBUG PASTE: Converted subcategory name '{value_str}' to ID {subcategory_id}")
+                                    else:
+                                        # If subcategory name not found, keep original value
+                                        new_value = old_value
+                                        print(f"DEBUG PASTE: Subcategory name '{value_str}' not found for category ID {category_id}, keeping original value")
+                                else:
+                                    # If no category ID context, keep original value
+                                    new_value = old_value
+                                    print(f"DEBUG PASTE: No category ID context for subcategory '{value_str}', keeping original value")
+                            # No specific conversion needed for other columns,
                             # rely on validation during save. Keep as string.
-                        except Exception:
+                        except Exception as e:
+                            print(f"DEBUG PASTE: Error converting value: {e}")
                             new_value = old_value # Revert on any conversion error
 
                         new_value_str = str(new_value)
@@ -1726,6 +1806,14 @@ class ExpenseTrackerGUI(QMainWindow):
             for cmd in commands_to_push:
                 self.undo_stack.push(cmd) # Pushing runs redo(), which updates data and UI
             self.undo_stack.endMacro()
+
+            # Update currency display for any rows where account was changed
+            account_col_index = self.COLS.index('account') if 'account' in self.COLS else -1
+            if account_col_index >= 0:
+                for row, col in affected_rows_cols:
+                    if col == account_col_index:
+                        print(f"DEBUG PASTE: Updating currency display for row {row} after account change")
+                        self._update_currency_display_for_row(row)
 
             # Explicitly refresh the UI to ensure pasted data is visible
             self._refresh()
