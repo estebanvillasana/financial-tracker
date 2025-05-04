@@ -6,6 +6,18 @@ from PyQt6.QtGui import QUndoCommand
 from PyQt6.QtCore import Qt, QTimer # Import Qt for roles and QTimer
 from PyQt6.QtWidgets import QTableWidgetItem
 
+# Import debug configuration
+try:
+    from debug_config import debug_config, debug_print
+except ImportError:
+    # Fallback if debug_config.py doesn't exist yet
+    class DummyDebugConfig:
+        def is_enabled(self, category):
+            return False
+    debug_config = DummyDebugConfig()
+    def debug_print(category, message):
+        pass
+
 class CellEditCommand(QUndoCommand):
     """Undo/Redo command for cell edits."""
     def __init__(self, main_window, row, col, old_value, new_value, parent=None):
@@ -43,7 +55,7 @@ class CellEditCommand(QUndoCommand):
                 self.target_index = pending_index
                 self.target_data_dict = self.main_window.pending[self.target_index]
             else:
-                 print(f"Error (Command Init): Invalid pending index {pending_index} for row {self.row}")
+                 debug_print('UNDERLYING_DATA', f"Error: Invalid pending index {pending_index} for row {self.row}")
                  self.setObsolete(True); return # Mark command as invalid immediately
         else:
             self.is_pending = False
@@ -52,14 +64,14 @@ class CellEditCommand(QUndoCommand):
                 self.target_data_dict = self.main_window.transactions[self.target_index]
                 self.rowid = self.target_data_dict.get('rowid') # Get rowid for existing transactions
             else:
-                 print(f"Error (Command Init): Invalid transaction index {self.row}")
+                 debug_print('UNDERLYING_DATA', f"Error: Invalid transaction index {self.row}")
                  self.setObsolete(True); return # Mark command as invalid
 
         # --- Get Column Key ---
         try:
             self.col_key = self.main_window.COLS[self.col]
         except IndexError:
-             print(f"Error (Command Init): Invalid column index {self.col}")
+             debug_print('UNDERLYING_DATA', f"Error: Invalid column index {self.col}")
              self.setObsolete(True); return # Mark command as invalid
 
         # --- Type Conversion and Value Preparation ---
@@ -68,7 +80,7 @@ class CellEditCommand(QUndoCommand):
             self.old_value = self._prepare_decimal(self._raw_old_value)
             self.new_value = self._prepare_decimal(self._raw_new_value)
             if self.new_value is None: # If new value conversion failed
-                 print(f"Error (Command Init): Invalid new Decimal value for {self.col_key}: '{self._raw_new_value}'")
+                 debug_print('CURRENCY', f"Error: Invalid new Decimal value for {self.col_key}: '{self._raw_new_value}'")
                  self.setObsolete(True); return
         else:
              # For other columns, use the values as passed (should be IDs for linked fields)
@@ -123,7 +135,7 @@ class CellEditCommand(QUndoCommand):
             bool: True if successful, False otherwise.
         """
         if self.target_data_dict is None:
-            print(f"Error in _update_data: Command is obsolete or target_data_dict is None.")
+            debug_print('UNDERLYING_DATA', f"Error in _update_data: Command is obsolete or target_data_dict is None.")
             return False
 
         # --- Apply the main value change ---
@@ -137,7 +149,7 @@ class CellEditCommand(QUndoCommand):
             target_value_name = self._find_name_for_id('account', target_value_id)
             self.target_data_dict['account_id'] = target_value_id
             self.target_data_dict['account'] = target_value_name
-            print(f"DEBUG _update_data: Updated account_id={target_value_id}, account='{target_value_name}'")
+            debug_print('ACCOUNT_CONVERSION', f"Updated account_id={target_value_id}, account='{target_value_name}'")
 
             # Update the UI to reflect the account change
             account_col = self.main_window.COLS.index('account')
@@ -145,11 +157,11 @@ class CellEditCommand(QUndoCommand):
                 item = self.main_window.tbl.item(self.row, account_col)
                 if item:
                     item.setText(target_value_name)
-                    print(f"DEBUG _update_data: Updated UI cell text to '{target_value_name}'")
+                    debug_print('ACCOUNT_CONVERSION', f"Updated UI cell text to '{target_value_name}'")
 
                     # Update the currency display for the transaction value
                     self.main_window._update_currency_display_for_row(self.row)
-                    print(f"DEBUG _update_data: Updated currency display for row {self.row}")
+                    debug_print('CURRENCY', f"Updated currency display for row {self.row}")
         elif self.col_key == 'transaction_type':
             # Handle transaction type change
             self.target_data_dict['transaction_type'] = value_to_set
@@ -201,7 +213,7 @@ class CellEditCommand(QUndoCommand):
                         else:
                             self.main_window.tbl.item(row, subcat_col).setText('UNCATEGORIZED')
 
-                print(f"Transaction type changed from {old_type} to {value_to_set}, updated category and subcategory")
+                debug_print('DROPDOWN', f"Transaction type changed from {old_type} to {value_to_set}, updated category and subcategory")
 
         elif self.col_key == 'category':
             target_value_id = value_to_set # value_to_set is the category_id
@@ -216,7 +228,7 @@ class CellEditCommand(QUndoCommand):
                  uncat_subcat_id = self._find_id_for_name('sub_category', 'UNCATEGORIZED', target_value_id)
                  if uncat_subcat_id is None:
                      # Try to ensure it exists if lookup failed
-                     print(f"Warning: UNCATEGORIZED subcategory not found for category ID {target_value_id}. Attempting creation.")
+                     debug_print('SUBCATEGORY', f"Warning: UNCATEGORIZED subcategory not found for category ID {target_value_id}. Attempting creation.")
                      uncat_subcat_id = self.main_window.db.ensure_subcategory('UNCATEGORIZED', target_value_id)
                      if uncat_subcat_id:
                           QTimer.singleShot(0, self.main_window._load_dropdown_data) # Reload if created
@@ -287,7 +299,7 @@ class CellEditCommand(QUndoCommand):
                          uncat_subcat_id = self._find_id_for_name('sub_category', 'UNCATEGORIZED', new_cat_id)
                          if uncat_subcat_id is None:
                              # Try to create it if it doesn't exist
-                             print(f"Creating UNCATEGORIZED subcategory for category ID {new_cat_id}")
+                             debug_print('SUBCATEGORY', f"Creating UNCATEGORIZED subcategory for category ID {new_cat_id}")
                              uncat_subcat_id = self.main_window.db.ensure_subcategory('UNCATEGORIZED', new_cat_id)
                              if uncat_subcat_id:
                                  # Add to subcategories list
@@ -302,7 +314,7 @@ class CellEditCommand(QUndoCommand):
                          # Set the subcategory to UNCATEGORIZED
                          self.target_data_dict['sub_category_id'] = uncat_subcat_id
                          self.target_data_dict['sub_category'] = 'UNCATEGORIZED'
-                         print(f"DEBUG _update_data: Category is {target_value_name}, setting subcategory to UNCATEGORIZED (ID: {uncat_subcat_id})")
+                         debug_print('SUBCATEGORY', f"Category is {target_value_name}, setting subcategory to UNCATEGORIZED (ID: {uncat_subcat_id})")
 
                          # Update the UI to reflect the changes
                          subcategory_col = self.main_window.COLS.index('sub_category')
@@ -315,7 +327,7 @@ class CellEditCommand(QUndoCommand):
                  current_cat_id = self.target_data_dict.get('category_id')
                  subcat_id = self._find_id_for_name('sub_category', value_to_set, current_cat_id)
                  self.target_data_dict['sub_category_id'] = subcat_id
-                 print(f"DEBUG _update_data: Set sub_category_id to {subcat_id} based on name '{value_to_set}' (cat_id: {current_cat_id})")
+                 debug_print('SUBCATEGORY', f"Set sub_category_id to {subcat_id} based on name '{value_to_set}' (cat_id: {current_cat_id})")
 
             # If transaction_type changes, the category/subcategory might become invalid.
             # The validation in _save_changes should catch this. We could try to auto-fix here,
