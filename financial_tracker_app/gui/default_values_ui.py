@@ -7,9 +7,9 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLineEdit,
 from PyQt6.QtCore import QDate, Qt
 from PyQt6.QtGui import QIcon
 
-from default_values import default_values
-from custom_widgets import ArrowComboBox, ArrowDateEdit # Use custom widgets
-from debug_config import debug_config, debug_print
+from financial_tracker_app.logic.default_values import default_values
+from financial_tracker_app.gui.custom_widgets import ArrowComboBox, ArrowDateEdit # Use custom widgets
+from financial_tracker_app.utils.debug_config import debug_config, debug_print
 from decimal import Decimal, InvalidOperation
 
 class DefaultValuesDialog(QDialog):

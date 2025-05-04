@@ -4,12 +4,13 @@ Default Values Module for Financial Tracker
 This module provides functionality to store and manage default values for transaction fields.
 """
 import json
+import os
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from PyQt6.QtCore import QDate
 from PyQt6.QtWidgets import QLineEdit, QComboBox, QDateEdit
 
-from debug_config import debug_config, debug_print
+from financial_tracker_app.utils.debug_config import debug_config, debug_print
 
 # Configuration file path
 DEFAULT_VALUES_FILE = "default_values.json"

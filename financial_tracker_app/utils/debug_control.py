@@ -6,7 +6,7 @@ It can be imported and used directly in the application or run as a standalone s
 """
 
 import sys
-from debug_config import debug_config
+from financial_tracker_app.utils.debug_config import debug_config
 
 def show_debug_menu():
     """Display the debug configuration menu"""
