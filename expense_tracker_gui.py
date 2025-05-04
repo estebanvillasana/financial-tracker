@@ -2,6 +2,7 @@
 
 import sys
 import os
+import re
 import sqlite3
 from datetime import datetime
 from decimal import Decimal, InvalidOperation # Import Decimal
@@ -1701,9 +1702,30 @@ class ExpenseTrackerGUI(QMainWindow):
                         new_value = value_str.strip() # Start with the string value
                         try:
                             if col_key == 'transaction_value':
-                                amount_val, ok = self.locale.toFloat(new_value)
-                                if ok: new_value = amount_val
-                                else: new_value = old_value # Revert if invalid amount format
+                                # Clean up the value string by removing currency symbols and formatting
+                                cleaned_value = new_value
+
+                                # Remove currency symbols and codes ($ MXN, $ USD, etc.)
+                                currency_patterns = [r'\$ [A-Z]{3}', r'\$[A-Z]{3}', r'\$']
+                                for pattern in currency_patterns:
+                                    cleaned_value = re.sub(pattern, '', cleaned_value)
+
+                                # Remove commas used as thousand separators
+                                cleaned_value = cleaned_value.replace(',', '')
+
+                                # Strip any remaining whitespace
+                                cleaned_value = cleaned_value.strip()
+
+                                print(f"DEBUG PASTE: Transaction value '{new_value}' cleaned to '{cleaned_value}'")
+
+                                # Try to convert to float
+                                amount_val, ok = self.locale.toFloat(cleaned_value)
+                                if ok:
+                                    new_value = amount_val
+                                    print(f"DEBUG PASTE: Converted transaction value '{cleaned_value}' to {amount_val}")
+                                else:
+                                    print(f"DEBUG PASTE: Failed to convert transaction value '{cleaned_value}' to float")
+                                    new_value = old_value # Revert if invalid amount format
                             # Handle account column - convert account name to account_id
                             elif col_key == 'account':
                                 # Check if the pasted value is an account name
