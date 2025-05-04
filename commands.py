@@ -3,7 +3,8 @@
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP # Import Decimal and rounding mode
 
 from PyQt6.QtGui import QUndoCommand
-from PyQt6.QtCore import Qt # Import Qt for roles
+from PyQt6.QtCore import Qt, QTimer # Import Qt for roles and QTimer
+from PyQt6.QtWidgets import QTableWidgetItem
 
 class CellEditCommand(QUndoCommand):
     """Undo/Redo command for cell edits."""
@@ -137,6 +138,59 @@ class CellEditCommand(QUndoCommand):
             self.target_data_dict['account_id'] = target_value_id
             self.target_data_dict['account'] = target_value_name
             # print(f"DEBUG _update_data: Updated account_id={target_value_id}, account='{target_value_name}'")
+        elif self.col_key == 'transaction_type':
+            # Handle transaction type change
+            self.target_data_dict['transaction_type'] = value_to_set
+
+            # When transaction type changes, we need to update the category to an appropriate one for the new type
+            old_type = self._old_related_ids.get('transaction_type')
+            if old_type != value_to_set:
+                # Find UNCATEGORIZED category for the new transaction type
+                uncategorized_cat = None
+                for cat in self.main_window._categories_data:
+                    if cat['name'] == 'UNCATEGORIZED' and cat['type'] == value_to_set:
+                        uncategorized_cat = cat
+                        break
+
+                if uncategorized_cat:
+                    # Update category
+                    self.target_data_dict['category_id'] = uncategorized_cat['id']
+                    self.target_data_dict['category'] = uncategorized_cat['name']
+
+                    # Find UNCATEGORIZED subcategory for this category
+                    uncategorized_subcat = None
+                    for subcat in self.main_window._subcategories_data:
+                        if subcat['category_id'] == uncategorized_cat['id'] and subcat['name'] == 'UNCATEGORIZED':
+                            uncategorized_subcat = subcat
+                            break
+
+                    if uncategorized_subcat:
+                        self.target_data_dict['sub_category_id'] = uncategorized_subcat['id']
+                        self.target_data_dict['sub_category'] = uncategorized_subcat['name']
+                    else:
+                        # If UNCATEGORIZED subcategory doesn't exist, create it
+                        uncat_subcat_id = self.main_window.db.ensure_subcategory('UNCATEGORIZED', uncategorized_cat['id'])
+                        if uncat_subcat_id:
+                            self.target_data_dict['sub_category_id'] = uncat_subcat_id
+                            self.target_data_dict['sub_category'] = 'UNCATEGORIZED'
+                            QTimer.singleShot(0, self.main_window._load_dropdown_data)
+
+                    # Update the UI to reflect the changes
+                    row = self.target_index
+                    if row >= 0:
+                        # Update category cell
+                        cat_col = self.main_window.COLS.index('category')
+                        self.main_window.tbl.item(row, cat_col).setText('UNCATEGORIZED')
+
+                        # Update subcategory cell
+                        subcat_col = self.main_window.COLS.index('sub_category')
+                        if self.main_window.tbl.item(row, subcat_col) is None:
+                            self.main_window.tbl.setItem(row, subcat_col, QTableWidgetItem('UNCATEGORIZED'))
+                        else:
+                            self.main_window.tbl.item(row, subcat_col).setText('UNCATEGORIZED')
+
+                print(f"Transaction type changed from {old_type} to {value_to_set}, updated category and subcategory")
+
         elif self.col_key == 'category':
             target_value_id = value_to_set # value_to_set is the category_id
             current_type = self.target_data_dict.get('transaction_type', 'Expense')
@@ -212,19 +266,44 @@ class CellEditCommand(QUndoCommand):
                  current_type = self.target_data_dict.get('transaction_type', 'Expense')
                  cat_id = self._find_id_for_name('category', value_to_set, current_type)
                  self.target_data_dict['category_id'] = cat_id
-                 # If category *name* changes, the old subcategory is likely invalid. Clear it.
-                 # Check if the subcategory field is *also* being changed in the same macro - complex.
-                 # Simple approach: Clear subcategory if category name changes.
+                 # Set subcategory to UNCATEGORIZED when category changes or when category is UNCATEGORIZED
                  if self.target_data_dict.get('category_id') != self._old_related_ids.get('category_id'):
-                      self.target_data_dict['sub_category_id'] = None
-                      self.target_data_dict['sub_category'] = '' # Or find 'UNCATEGORIZED' subcat ID? Safer to clear.
-                      print(f"DEBUG _update_data: Category name changed, clearing subcategory.")
+                     # Find UNCATEGORIZED subcategory for the new category
+                     new_cat_id = self.target_data_dict.get('category_id')
+                     if new_cat_id is not None:
+                         # Try to find existing UNCATEGORIZED subcategory
+                         uncat_subcat_id = self._find_id_for_name('sub_category', 'UNCATEGORIZED', new_cat_id)
+                         if uncat_subcat_id is None:
+                             # Try to create it if it doesn't exist
+                             print(f"Creating UNCATEGORIZED subcategory for category ID {new_cat_id}")
+                             uncat_subcat_id = self.main_window.db.ensure_subcategory('UNCATEGORIZED', new_cat_id)
+                             if uncat_subcat_id:
+                                 # Add to subcategories list
+                                 self.main_window._subcategories_data.append({
+                                     'id': uncat_subcat_id,
+                                     'name': 'UNCATEGORIZED',
+                                     'category_id': new_cat_id
+                                 })
+                                 # Reload dropdown data in the background
+                                 QTimer.singleShot(0, self.main_window._load_dropdown_data)
+
+                         # Set the subcategory to UNCATEGORIZED
+                         self.target_data_dict['sub_category_id'] = uncat_subcat_id
+                         self.target_data_dict['sub_category'] = 'UNCATEGORIZED'
+                         print(f"DEBUG _update_data: Category is {target_value_name}, setting subcategory to UNCATEGORIZED (ID: {uncat_subcat_id})")
+
+                         # Update the UI to reflect the changes
+                         subcategory_col = self.main_window.COLS.index('sub_category')
+                         if self.row < self.main_window.tbl.rowCount():
+                             item = self.main_window.tbl.item(self.row, subcategory_col)
+                             if item:
+                                 item.setText('UNCATEGORIZED')
                  # print(f"DEBUG _update_data: Set category_id to {cat_id} based on name '{value_to_set}' (type: {current_type})")
             elif self.col_key == 'sub_category':
                  current_cat_id = self.target_data_dict.get('category_id')
                  subcat_id = self._find_id_for_name('sub_category', value_to_set, current_cat_id)
                  self.target_data_dict['sub_category_id'] = subcat_id
-                 # print(f"DEBUG _update_data: Set sub_category_id to {subcat_id} based on name '{value_to_set}' (cat_id: {current_cat_id})")
+                 print(f"DEBUG _update_data: Set sub_category_id to {subcat_id} based on name '{value_to_set}' (cat_id: {current_cat_id})")
 
             # If transaction_type changes, the category/subcategory might become invalid.
             # The validation in _save_changes should catch this. We could try to auto-fix here,

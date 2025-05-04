@@ -88,52 +88,146 @@ class SpreadsheetDelegate(QStyledItemDelegate):
         elif col_key == 'account':
             editor = QComboBox(parent)
             editor.setEditable(False)
-            editor.addItem("", userData=None) # Add empty item for placeholder/clearing
+            # Don't add empty item, just populate with accounts
             for acc in self.accounts_list:
                 editor.addItem(acc['name'], userData=acc['id'])
-            if editor.count() <= 1: # Only the empty item added
+            if editor.count() == 0:
                 editor.addItem("No Accounts Available")
-                editor.model().item(1).setEnabled(False) # Disable the message item
+                editor.model().item(0).setEnabled(False) # Disable the message item
                 editor.setEnabled(False)
             return editor
+        elif col_key == 'transaction_type':
+            editor = QComboBox(parent)
+            editor.setEditable(False)
+            editor.addItem('Expense', userData='Expense')
+            editor.addItem('Income', userData='Income')
+
+            # Set current value if available
+            if current_transaction_data and 'transaction_type' in current_transaction_data:
+                current_type = current_transaction_data['transaction_type']
+                index = editor.findText(current_type)
+                if index >= 0:
+                    editor.setCurrentIndex(index)
+
+            return editor
+
         elif col_key == 'category':
             editor = QComboBox(parent)
             editor.setEditable(False)
-            editor.addItem("", userData=None) # Add empty item
             # Filter categories based on the current row's transaction type
             current_type = 'Expense' # Default assumption
+
+            # Debug print to see what data we have for this row
+            print(f"Category dropdown - Transaction data keys: {current_transaction_data.keys() if current_transaction_data else 'None'}")
+
+            # Check if this is a bank account mistakenly set as a category
+            if current_transaction_data and 'account' in current_transaction_data:
+                account_name = current_transaction_data.get('account')
+                for acc in self.accounts_list:
+                    if acc['name'] == account_name and 'category' in current_transaction_data and current_transaction_data['category'] == account_name:
+                        # This is a bank account mistakenly set as a category
+                        print(f"WARNING: Bank account '{account_name}' found in category field. Will be fixed on refresh.")
+                        # The fix will happen in _refresh method
+
             if current_transaction_data and 'transaction_type' in current_transaction_data:
                  current_type = current_transaction_data['transaction_type']
 
+            print(f"Category dropdown - Using transaction type: {current_type}")
+
+            # Don't add empty item, just populate with categories
+            has_uncategorized = False
             for cat in self.categories_list:
                  if cat['type'] == current_type:
+                      print(f"  Adding category: {cat['name']} (ID: {cat['id']}, Type: {cat['type']})")
                       editor.addItem(cat['name'], userData=cat['id'])
+                      if cat['name'] == 'UNCATEGORIZED':
+                          has_uncategorized = True
 
-            if editor.count() <= 1:
+            if editor.count() == 0:
                 editor.addItem(f"No {current_type} Categories")
-                editor.model().item(1).setEnabled(False)
+                editor.model().item(0).setEnabled(False)
                 editor.setEnabled(False)
             return editor
         elif col_key == 'sub_category':
             editor = QComboBox(parent)
             editor.setEditable(False)
-            editor.addItem("", userData=None) # Add empty item
             # Filter subcategories based on the current row's category ID
             current_category_id = None
-            if current_transaction_data and 'category_id' in current_transaction_data:
-                 current_category_id = current_transaction_data['category_id']
 
+            # Check for category ID in different possible fields
+            if current_transaction_data:
+                if 'category_id' in current_transaction_data:
+                    current_category_id = current_transaction_data['category_id']
+                elif 'transaction_category' in current_transaction_data:
+                    current_category_id = current_transaction_data['transaction_category']
+                # If we have a category name but no ID, try to find the ID
+                elif 'category' in current_transaction_data and self.parent_window:
+                    category_name = current_transaction_data['category']
+                    transaction_type = current_transaction_data.get('transaction_type', 'Expense')
+
+                    # Find the category ID by name and type
+                    for cat in self.categories_list:
+                        if cat['name'] == category_name and cat['type'] == transaction_type:
+                            current_category_id = cat['id']
+                            # Update the transaction data with the category ID
+                            current_transaction_data['category_id'] = cat['id']
+                            break
+
+                    # If we couldn't find the category, check if it's a bank account mistakenly set as category
+                    if current_category_id is None and 'account' in current_transaction_data:
+                        account_name = current_transaction_data.get('account')
+                        if account_name == category_name:
+                            # This is a bank account mistakenly set as category
+                            # Find UNCATEGORIZED category for the current transaction type
+                            transaction_type = current_transaction_data.get('transaction_type', 'Expense')
+                            for cat in self.categories_list:
+                                if cat['name'] == 'UNCATEGORIZED' and cat['type'] == transaction_type:
+                                    current_category_id = cat['id']
+                                    # Update the transaction data
+                                    current_transaction_data['category'] = 'UNCATEGORIZED'
+                                    current_transaction_data['category_id'] = cat['id']
+                                    break
+
+            # Debug print to help diagnose issues
+            print(f"Subcategory dropdown - Current category ID: {current_category_id}")
+            print(f"Transaction data keys: {current_transaction_data.keys() if current_transaction_data else 'None'}")
+
+            # Check if the category is UNCATEGORIZED
+            category_is_uncategorized = False
             if current_category_id is not None:
-                 for subcat in self.subcategories_list:
-                      # Ensure category_id types match for comparison (e.g., both int)
-                      if subcat.get('category_id') == current_category_id:
-                           editor.addItem(subcat['name'], userData=subcat['id'])
+                for cat in self.categories_list:
+                    if cat['id'] == current_category_id and cat['name'] == 'UNCATEGORIZED':
+                        category_is_uncategorized = True
+                        break
 
-            if editor.count() <= 1:
+            has_uncategorized = False
+            if current_category_id is not None:
+                # Don't add empty item, just populate with subcategories
+                for subcat in self.subcategories_list:
+                    # Ensure category_id types match for comparison (e.g., both int)
+                    if subcat.get('category_id') == current_category_id:
+                        print(f"  Adding subcategory: {subcat['name']} (ID: {subcat['id']}, Category ID: {subcat['category_id']})")
+                        editor.addItem(subcat['name'], userData=subcat['id'])
+                        if subcat['name'] == 'UNCATEGORIZED':
+                            has_uncategorized = True
+                            # If category is UNCATEGORIZED, select UNCATEGORIZED subcategory by default
+                            if category_is_uncategorized:
+                                editor.setCurrentIndex(editor.count() - 1)
+
+                # If no UNCATEGORIZED subcategory exists for this category, create one
+                if not has_uncategorized and self.parent_window and hasattr(self.parent_window, 'db'):
+                    print(f"Creating UNCATEGORIZED subcategory for category ID {current_category_id}")
+                    uncategorized_id = self.parent_window.db.ensure_subcategory('UNCATEGORIZED', current_category_id)
+                    if uncategorized_id:
+                        editor.addItem('UNCATEGORIZED', userData=uncategorized_id)
+                        # Reload dropdown data in the background
+                        QTimer.singleShot(0, lambda: self.parent_window._load_dropdown_data())
+
+            if editor.count() == 0:
                 # Provide a more informative placeholder if category isn't selected yet
                 placeholder = "Select Category First" if current_category_id is None else "No Subcategories"
                 editor.addItem(placeholder)
-                editor.model().item(1).setEnabled(False)
+                editor.model().item(0).setEnabled(False)
                 editor.setEnabled(False if current_category_id is None else True) # Enable if category is selected but no subcats exist
 
             return editor
@@ -303,10 +397,220 @@ class SpreadsheetDelegate(QStyledItemDelegate):
                 current_index = editor.currentIndex()
                 if current_index >= 0: # Ensure a valid item is selected
                     new_value_for_model = editor.itemData(current_index) # Get ID from userData
+                    display_text = editor.itemText(current_index)
+
                     # Handle the case where the empty item ("") is selected, store None
-                    if new_value_for_model == "" and editor.itemText(current_index) == "":
+                    if new_value_for_model == "" and display_text == "":
                          new_value_for_model = None
+
                     new_value_for_command = new_value_for_model # Pass ID to command
+
+                    # Special handling for transaction type changes
+                    if col_key == 'transaction_type':
+                        # When transaction type changes, we need to update the category to UNCATEGORIZED for the new type
+                        # Find the category and subcategory column indices
+                        category_col = self.parent_window.COLS.index('category')
+                        subcategory_col = self.parent_window.COLS.index('sub_category')
+
+                        # Find UNCATEGORIZED category for the new transaction type
+                        uncategorized_cat = None
+                        for cat in self.categories_list:
+                            if cat['name'] == 'UNCATEGORIZED' and cat['type'] == display_text:
+                                uncategorized_cat = cat
+                                break
+
+                        if uncategorized_cat:
+                            # Find UNCATEGORIZED subcategory for this category
+                            uncategorized_subcat = None
+                            for subcat in self.subcategories_list:
+                                if subcat['category_id'] == uncategorized_cat['id'] and subcat['name'] == 'UNCATEGORIZED':
+                                    uncategorized_subcat = subcat
+                                    break
+
+                            # Update the model with the new category and subcategory
+                            if uncategorized_subcat:
+                                # Schedule the updates to happen after this method completes
+                                QTimer.singleShot(0, lambda: model.setData(model.index(row, category_col), 'UNCATEGORIZED'))
+                                QTimer.singleShot(0, lambda: model.setData(model.index(row, subcategory_col), 'UNCATEGORIZED'))
+
+                                # Also update the command's target_data_dict directly
+                                if hasattr(self.parent_window, 'undo_stack'):
+                                    # Get the most recent command
+                                    command = self.parent_window.undo_stack.command(self.parent_window.undo_stack.count() - 1)
+                                    if hasattr(command, 'target_data_dict'):
+                                        command.target_data_dict['category'] = 'UNCATEGORIZED'
+                                        command.target_data_dict['category_id'] = uncategorized_cat['id']
+                                        command.target_data_dict['sub_category'] = 'UNCATEGORIZED'
+                                        command.target_data_dict['sub_category_id'] = uncategorized_subcat['id']
+
+                                print(f"Transaction type changed to {display_text}, setting category and subcategory to UNCATEGORIZED")
+
+                    # Special handling for category selection
+                    elif col_key == 'category':
+                        # Debug print for all category selections
+                        print(f"DEBUG CATEGORY SELECTION: Row {row}, Selected='{display_text}', ID={new_value_for_model}")
+
+                        # Find the subcategory column index (needed for all category selections)
+                        subcategory_col = self.parent_window.COLS.index('sub_category')
+
+                        # Get the transaction type to find the correct UNCATEGORIZED category
+                        transaction_type = 'Expense'  # Default
+                        transaction_data = None
+
+                        # Get the current transaction data to determine the transaction type
+                        if row < len(self.parent_window.transactions):
+                            transaction_data = self.parent_window.transactions[row]
+                        elif row - len(self.parent_window.transactions) < len(self.parent_window.pending):
+                            transaction_data = self.parent_window.pending[row - len(self.parent_window.transactions)]
+
+                        if transaction_data and 'transaction_type' in transaction_data:
+                            transaction_type = transaction_data['transaction_type']
+
+                        # Only verify if the selected category is UNCATEGORIZED
+                        if display_text == 'UNCATEGORIZED':
+                            # Verify we have the correct UNCATEGORIZED category for this transaction type
+                            correct_category_id = None
+                            for cat in self.categories_list:
+                                if cat['name'] == 'UNCATEGORIZED' and cat['type'] == transaction_type:
+                                    correct_category_id = cat['id']
+                                    # If the selected category ID doesn't match the correct one, update it
+                                    if new_value_for_model != correct_category_id:
+                                        new_value_for_model = correct_category_id
+                                    break
+
+                        # Directly update the underlying data in the transaction or pending list
+                        if transaction_data:
+                            # Get the selected category name
+                            selected_category_name = display_text
+                            transaction_data['category'] = selected_category_name
+                            transaction_data['category_id'] = new_value_for_model
+
+                            # Update the model with the correct category ID and name
+                            model.setData(index, new_value_for_model, Qt.ItemDataRole.EditRole)
+                            model.setData(index, selected_category_name, Qt.ItemDataRole.DisplayRole)
+
+                        # Only set subcategory to UNCATEGORIZED if the selected category is UNCATEGORIZED
+                        if display_text == 'UNCATEGORIZED':
+                            # Find UNCATEGORIZED subcategory for this category
+                            uncat_subcat_id = None
+                            for subcat in self.subcategories_list:
+                                if subcat['category_id'] == new_value_for_model and subcat['name'] == 'UNCATEGORIZED':
+                                    uncat_subcat_id = subcat['id']
+                                    break
+
+                            # If not found, try to create it
+                            if uncat_subcat_id is None and self.parent_window and hasattr(self.parent_window, 'db'):
+                                print(f"Creating UNCATEGORIZED subcategory for category ID {new_value_for_model}")
+                                uncat_subcat_id = self.parent_window.db.ensure_subcategory('UNCATEGORIZED', new_value_for_model)
+                                if uncat_subcat_id:
+                                    # Add to subcategories list
+                                    self.subcategories_list.append({
+                                        'id': uncat_subcat_id,
+                                        'name': 'UNCATEGORIZED',
+                                        'category_id': new_value_for_model
+                                    })
+                                    # Reload dropdown data in the background
+                                    QTimer.singleShot(0, lambda: self.parent_window._load_dropdown_data())
+
+                            # If found, update the subcategory in the model and underlying data
+                            if uncat_subcat_id is not None and transaction_data:
+                                # Update the underlying data
+                                transaction_data['sub_category'] = 'UNCATEGORIZED'
+                                transaction_data['sub_category_id'] = uncat_subcat_id
+
+                                # Update the model with the subcategory ID and name
+                                model.setData(model.index(row, subcategory_col), uncat_subcat_id, Qt.ItemDataRole.EditRole)
+                                model.setData(model.index(row, subcategory_col), 'UNCATEGORIZED', Qt.ItemDataRole.DisplayRole)
+
+                                # Also update the command's target_data_dict directly
+                                if hasattr(self.parent_window, 'undo_stack'):
+                                    # Get the most recent command
+                                    command = self.parent_window.undo_stack.command(self.parent_window.undo_stack.count() - 1)
+                                    if hasattr(command, 'target_data_dict'):
+                                        command.target_data_dict['category_id'] = new_value_for_model
+                                        command.target_data_dict['category'] = 'UNCATEGORIZED'
+                                        command.target_data_dict['sub_category'] = 'UNCATEGORIZED'
+                                        command.target_data_dict['sub_category_id'] = uncat_subcat_id
+
+                                print(f"Category is UNCATEGORIZED, setting subcategory to UNCATEGORIZED (ID: {uncat_subcat_id})")
+
+                    # Special handling for subcategory selection
+                    elif col_key == 'sub_category':
+                        # Debug print for subcategory selection
+                        print(f"DEBUG SUBCATEGORY SELECTION: Row {row}, Selected='{display_text}', ID={new_value_for_model}")
+
+                        # Get the current transaction data
+                        transaction_data = None
+                        if row < len(self.parent_window.transactions):
+                            transaction_data = self.parent_window.transactions[row]
+                        elif row - len(self.parent_window.transactions) < len(self.parent_window.pending):
+                            transaction_data = self.parent_window.pending[row - len(self.parent_window.transactions)]
+
+                        # Get the current category ID
+                        category_id = None
+                        if transaction_data:
+                            category_id = transaction_data.get('category_id')
+                            print(f"DEBUG SUBCATEGORY: Category ID for this row is {category_id}")
+
+                        # Verify the subcategory belongs to the current category
+                        found = False
+                        for subcat in self.subcategories_list:
+                            if subcat['id'] == new_value_for_model:
+                                if subcat['category_id'] == category_id:
+                                    found = True
+                                    print(f"DEBUG SUBCATEGORY: Verified subcategory ID {new_value_for_model} belongs to category {category_id}")
+                                else:
+                                    print(f"WARNING: Subcategory ID {new_value_for_model} belongs to category {subcat['category_id']}, not {category_id}")
+                                    # If the subcategory doesn't belong to the current category, find the UNCATEGORIZED subcategory
+                                    if category_id is not None:
+                                        for uncat_subcat in self.subcategories_list:
+                                            if uncat_subcat['category_id'] == category_id and uncat_subcat['name'] == 'UNCATEGORIZED':
+                                                new_value_for_model = uncat_subcat['id']
+                                                print(f"DEBUG SUBCATEGORY: Using UNCATEGORIZED subcategory ID {new_value_for_model} instead")
+                                                found = True
+                                                break
+                                break
+
+                        # If we couldn't find a valid subcategory, try to create an UNCATEGORIZED one
+                        if not found and category_id is not None:
+                            print(f"WARNING: Could not find valid subcategory for category ID {category_id}, creating UNCATEGORIZED")
+                            uncat_subcat_id = None
+                            for subcat in self.subcategories_list:
+                                if subcat['category_id'] == category_id and subcat['name'] == 'UNCATEGORIZED':
+                                    uncat_subcat_id = subcat['id']
+                                    break
+
+                            if uncat_subcat_id is None and self.parent_window and hasattr(self.parent_window, 'db'):
+                                print(f"Creating UNCATEGORIZED subcategory for category ID {category_id}")
+                                uncat_subcat_id = self.parent_window.db.ensure_subcategory('UNCATEGORIZED', category_id)
+                                if uncat_subcat_id:
+                                    # Add to subcategories list
+                                    self.subcategories_list.append({
+                                        'id': uncat_subcat_id,
+                                        'name': 'UNCATEGORIZED',
+                                        'category_id': category_id
+                                    })
+                                    # Use this as the new value
+                                    new_value_for_model = uncat_subcat_id
+                                    # Reload dropdown data in the background
+                                    QTimer.singleShot(0, lambda: self.parent_window._load_dropdown_data())
+
+                        # Update the underlying data
+                        if transaction_data and new_value_for_model is not None:
+                            # Find the subcategory name
+                            subcat_name = 'UNCATEGORIZED'  # Default
+                            for subcat in self.subcategories_list:
+                                if subcat['id'] == new_value_for_model:
+                                    subcat_name = subcat['name']
+                                    break
+
+                            transaction_data['sub_category'] = subcat_name
+                            transaction_data['sub_category_id'] = new_value_for_model
+                            print(f"DEBUG SUBCATEGORY: Updated transaction data with subcategory '{subcat_name}' (ID: {new_value_for_model})")
+
+                            # Update the model with both the ID and display text
+                            model.setData(index, new_value_for_model, Qt.ItemDataRole.EditRole)
+                            model.setData(index, subcat_name, Qt.ItemDataRole.DisplayRole)
                 else:
                      # No item selected or invalid index, revert? Or store None? Let's store None.
                      new_value_for_model = None
@@ -430,16 +734,30 @@ class SpreadsheetDelegate(QStyledItemDelegate):
             except Exception:
                 pass # Not a valid date string in the expected format
 
-        # Handle Account/Category/SubCategory (assuming model stores ID)
-        # We need to look up the *name* corresponding to the ID for display.
-        # This requires knowing which column we are displaying. Unfortunately,
-        # displayText doesn't get the index/column easily. This is a limitation.
-        # A common workaround is to have the *model* return the name via DisplayRole.
-        # If the model only returns the ID, the delegate can't easily look up the name here.
+        # Handle Account/Category/SubCategory IDs by looking up their names
+        if isinstance(value, int) and self.parent_window:
+            # Try to determine which column we're displaying
+            # This is a bit of a hack since displayText doesn't get the column index
+            # We'll try to guess based on the value and available data
 
-        # --- Assuming Model provides Name for DisplayRole ---
-        # If the model's data(role=DisplayRole) returns the name string directly,
-        # this fallback works.
+            # Check if it's an account ID
+            for acc in self.accounts_list:
+                if acc['id'] == value:
+                    return acc['name']
+
+            # Check if it's a category ID
+            for cat in self.categories_list:
+                if cat['id'] == value:
+                    return cat['name']
+
+            # Check if it's a subcategory ID
+            for subcat in self.subcategories_list:
+                if subcat['id'] == value:
+                    print(f"DEBUG DISPLAY: Found subcategory name '{subcat['name']}' for ID {value}")
+                    return subcat['name']
+
+            # If we get here, it's an ID we couldn't resolve
+            return f"ID:{value}"
 
         # Fallback: Display value as string (works for name, description, and potentially IDs if lookup fails)
         return str(value) if value is not None else ""

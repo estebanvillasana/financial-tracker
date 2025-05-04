@@ -24,7 +24,7 @@ from commands import CellEditCommand
 
 class ExpenseTrackerGUI(QMainWindow):
     # Define the columns for the *display* table (match the data we'll fetch)
-    COLS = ['transaction_name', 'transaction_value', 'account', 'category', 'sub_category', 'transaction_description', 'transaction_date']
+    COLS = ['transaction_name', 'transaction_value', 'account', 'transaction_type', 'category', 'sub_category', 'transaction_description', 'transaction_date']
 
     def __init__(self):
         super().__init__()
@@ -40,9 +40,14 @@ class ExpenseTrackerGUI(QMainWindow):
         self.selected_rows = set()
         self.locale = QLocale() # Add locale for consistent formatting
 
+        # Initialize dropdown data
+        self._accounts_data = []
+        self._categories_data = []
+        self._subcategories_data = []
+
         self._build_ui()
-        self._load_transactions()
-        self._load_dropdown_data()
+        self._load_dropdown_data() # Load dropdown data first
+        self._load_transactions() # Then load transactions
         self._populate_initial_form_dropdowns() # Populate dropdowns based on loaded data
 
         # Pass data sources to the delegate
@@ -224,7 +229,7 @@ class ExpenseTrackerGUI(QMainWindow):
         tblbox.setContentsMargins(0,0,0,0)
 
         self.tbl = QTableWidget(0, len(self.COLS))
-        self.tbl.setHorizontalHeaderLabels(['Transaction Name', 'Amount', 'Account', 'Category', 'Sub Category', 'Description', 'Date'])
+        self.tbl.setHorizontalHeaderLabels(['Transaction Name', 'Amount', 'Account', 'Type', 'Category', 'Sub Category', 'Description', 'Date'])
         self.tbl.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.tbl.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked |
                                QAbstractItemView.EditTrigger.EditKeyPressed)
@@ -264,23 +269,56 @@ class ExpenseTrackerGUI(QMainWindow):
         self.centralWidget().layout().addWidget(self._message)
         # --- End Message Label ---
 
+    def _ensure_uncategorized_subcategories(self):
+        """Ensure every category has an UNCATEGORIZED subcategory."""
+        for category in self._categories_data:
+            # Check if this category already has an UNCATEGORIZED subcategory
+            has_uncategorized = False
+            for subcat in self._subcategories_data:
+                if subcat['category_id'] == category['id'] and subcat['name'] == 'UNCATEGORIZED':
+                    has_uncategorized = True
+                    break
+
+            # If not, create one
+            if not has_uncategorized:
+                print(f"Creating UNCATEGORIZED subcategory for category {category['name']} (ID: {category['id']})")
+                subcategory_id = self.db.ensure_subcategory('UNCATEGORIZED', category['id'])
+                if subcategory_id:
+                    # Add to our local data
+                    self._subcategories_data.append({
+                        'id': subcategory_id,
+                        'name': 'UNCATEGORIZED',
+                        'category_id': category['id']
+                    })
+                else:
+                    print(f"Failed to create UNCATEGORIZED subcategory for category {category['name']}")
+
     def _load_dropdown_data(self):
         """Load data needed for dropdowns (accounts, categories, etc.)."""
+        # Clear existing data
         self._accounts_data = []
         self._categories_data = []
         self._subcategories_data = []
 
-        cur = self.db.conn.cursor()
-        cur.execute("SELECT id, account FROM bank_accounts ORDER BY account")
-        self._accounts_data = [{'id': row[0], 'name': row[1]} for row in cur.fetchall()]
+        try:
+            cur = self.db.conn.cursor()
+            cur.execute("SELECT id, account FROM bank_accounts ORDER BY account")
+            self._accounts_data = [{'id': row[0], 'name': row[1]} for row in cur.fetchall()]
 
-        cur.execute("SELECT id, category, type FROM categories ORDER BY type, category")
-        self._categories_data = [{'id': row[0], 'name': row[1], 'type': row[2]} for row in cur.fetchall()]
+            cur.execute("SELECT id, category, type FROM categories ORDER BY type, category")
+            self._categories_data = [{'id': row[0], 'name': row[1], 'type': row[2]} for row in cur.fetchall()]
 
-        cur.execute("SELECT id, sub_category, category_id FROM sub_categories ORDER BY category_id, sub_category")
-        self._subcategories_data = [{'id': row[0], 'name': row[1], 'category_id': row[2]} for row in cur.fetchall()]
+            cur.execute("SELECT id, sub_category, category_id FROM sub_categories ORDER BY category_id, sub_category")
+            self._subcategories_data = [{'id': row[0], 'name': row[1], 'category_id': row[2]} for row in cur.fetchall()]
 
-        self._populate_initial_form_dropdowns()
+            # Ensure every category has an UNCATEGORIZED subcategory
+            self._ensure_uncategorized_subcategories()
+        except Exception as e:
+            print(f"Error loading dropdown data: {e}")
+            # Initialize with empty lists if there's an error
+            self._accounts_data = []
+            self._categories_data = []
+            self._subcategories_data = []
 
     def _populate_initial_form_dropdowns(self):
         """Populate form dropdowns initially after data is loaded."""
@@ -409,11 +447,11 @@ class ExpenseTrackerGUI(QMainWindow):
                     COALESCE(t.transaction_name, ''), -- 1: Transaction Name
                     t.transaction_value,        -- 2: Amount
                     ba.account,                 -- 3: Bank Account Name
-                    c.category,                 -- 4: Category Name
-                    sc.sub_category,            -- 5: Sub Category Name
-                    COALESCE(t.transaction_description, ''), -- 6: Description
-                    t.transaction_date,         -- 7: Date
-                    t.transaction_type,         -- 8: Type ('Income'/'Expense') - fetch for potential use
+                    t.transaction_type,         -- 4: Type ('Income'/'Expense') - now displayed in the table
+                    c.category,                 -- 5: Category Name
+                    sc.sub_category,            -- 6: Sub Category Name
+                    COALESCE(t.transaction_description, ''), -- 7: Description
+                    t.transaction_date,         -- 8: Date
                     t.account_id,               -- 9: Account ID
                     t.transaction_category,     -- 10: Category ID (Reverted name)
                     t.transaction_sub_category  -- 11: SubCategory ID (Reverted name)
@@ -435,7 +473,7 @@ class ExpenseTrackerGUI(QMainWindow):
         self._original_data_cache = {} # Clear cache
         # Define the keys corresponding to the SELECT statement order
         # Reverted to original column names
-        data_keys = ['rowid', 'transaction_name', 'transaction_value', 'account', 'category', 'sub_category', 'transaction_description', 'transaction_date', 'transaction_type', 'account_id', 'transaction_category', 'transaction_sub_category']
+        data_keys = ['rowid', 'transaction_name', 'transaction_value', 'account', 'transaction_type', 'category', 'sub_category', 'transaction_description', 'transaction_date', 'account_id', 'transaction_category', 'transaction_sub_category']
 
         fetched_data = cur.fetchall() if cur else []
 
@@ -443,6 +481,7 @@ class ExpenseTrackerGUI(QMainWindow):
             rowid = r[0] # Use the first column (t.id) as the rowid
             # Map fetched data using data_keys
             data = dict(zip(data_keys, r))
+
             # Ensure rowid is stored explicitly if needed elsewhere (though data['id'] covers it)
             # data['rowid'] = rowid # Reverted - 'rowid' is now the first key in data_keys
             self.transactions.append(data)
@@ -876,8 +915,27 @@ class ExpenseTrackerGUI(QMainWindow):
                      else:
                          errors['sub_category'] = 'Could not default to UNCATEGORIZED subcategory.'
                 else:
-                    # Parent category is not UNCATEGORIZED, and no valid subcategory provided
-                     errors['sub_category'] = 'Subcategory is required for this category.'
+                    # Check if this category has any subcategories at all
+                    has_subcategories = False
+                    for subcat in self._subcategories_data:
+                        if subcat['category_id'] == valid_category_id:
+                            has_subcategories = True
+                            break
+
+                    if has_subcategories:
+                        # Only require subcategory if the category has subcategories
+                        errors['sub_category'] = 'Subcategory is required for this category.'
+                    else:
+                        # If category has no subcategories, create an UNCATEGORIZED one
+                        print(f"Category {valid_category_id} has no subcategories, creating UNCATEGORIZED")
+                        ensured_id = self.db.ensure_subcategory('UNCATEGORIZED', valid_category_id)
+                        if ensured_id:
+                            valid_subcategory_id = ensured_id
+                            cleaned_data['sub_category_id'] = valid_subcategory_id
+                            cleaned_data['sub_category'] = 'UNCATEGORIZED'
+                            QTimer.singleShot(0, self._load_dropdown_data)
+                        else:
+                            errors['sub_category'] = 'Could not create UNCATEGORIZED subcategory.'
 
         elif not parent_category_error and valid_category_id is None:
              # This case should not happen if category validation logic is correct
@@ -892,6 +950,10 @@ class ExpenseTrackerGUI(QMainWindow):
 
         # --- Name and Description Cleaning ---
         # ... (existing name/desc cleaning) ...
+
+        # --- Set transaction_sub_category if valid_subcategory_id is set ---
+        if valid_subcategory_id is not None:
+            cleaned_data['transaction_sub_category'] = valid_subcategory_id
 
         # --- Update error state --- #
         if errors:
@@ -941,12 +1003,34 @@ class ExpenseTrackerGUI(QMainWindow):
                          valid_data = None # Mark as invalid
 
                 if valid_data:
-                    inserts_to_execute.append((
-                        valid_data['transaction_name'], float(valid_data['transaction_value']), valid_data['transaction_category'], # Use transaction_category
-                        valid_data['transaction_description'], valid_data['transaction_date']
-                        # Removed type, account_id, sub_category_id as they weren't in original INSERT
-                    ))
-                    pending_rows_that_passed_validation_indices.add(i)
+                    # Make sure all required fields are present
+                    if ('transaction_type' not in valid_data or
+                        'account_id' not in valid_data or
+                        'transaction_sub_category' not in valid_data):
+                        print(f"Missing required fields for row {row_idx_visual}:")
+                        print(f"  transaction_type: {valid_data.get('transaction_type')}")
+                        print(f"  account_id: {valid_data.get('account_id')}")
+                        print(f"  transaction_sub_category: {valid_data.get('transaction_sub_category')}")
+                        self.errors[row_idx_visual] = self.errors.get(row_idx_visual, {})
+                        if 'transaction_type' not in valid_data:
+                            self.errors[row_idx_visual]['transaction_type'] = "Transaction type is missing"
+                        if 'account_id' not in valid_data:
+                            self.errors[row_idx_visual]['account'] = "Account ID is missing"
+                        if 'transaction_sub_category' not in valid_data:
+                            self.errors[row_idx_visual]['sub_category'] = "Sub-category ID is missing"
+                        valid_data = None
+                    else:
+                        inserts_to_execute.append((
+                            valid_data['transaction_name'],
+                            float(valid_data['transaction_value']),
+                            valid_data['account_id'],
+                            valid_data['transaction_type'],
+                            valid_data['transaction_category'],
+                            valid_data['transaction_sub_category'],
+                            valid_data['transaction_description'],
+                            valid_data['transaction_date']
+                        ))
+                        pending_rows_that_passed_validation_indices.add(i)
                 else:
                     pending_rows_that_failed_validation_indices.append(i)
                     failed_pending_errors[i] = self.errors.get(row_idx_visual, {})
@@ -994,9 +1078,13 @@ class ExpenseTrackerGUI(QMainWindow):
                  self.db.conn.execute('BEGIN')
                  if inserts_to_execute:
                      self.db.conn.executemany('''
-                         INSERT INTO transactions(transaction_name, transaction_value, transaction_category, transaction_description, transaction_date)
-                         VALUES (?, ?, ?, ?, ?)
-                     ''', inserts_to_execute) # Reverted to original columns
+                         INSERT INTO transactions(
+                             transaction_name, transaction_value, account_id,
+                             transaction_type, transaction_category,
+                             transaction_sub_category, transaction_description, transaction_date
+                         )
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                     ''', inserts_to_execute) # Updated to include all required columns
 
                  if updates_to_execute:
                      self.db.conn.executemany('''
@@ -1521,6 +1609,144 @@ class ExpenseTrackerGUI(QMainWindow):
                 # Handle potential missing keys gracefully, although _load_transactions should provide them
                 value = row_data.get(key, '')
 
+                # Special handling for account, category, and sub_category to ensure we display names, not IDs
+                if key == 'account' and isinstance(value, int):
+                    # If we have an account ID instead of a name, look up the name
+                    for acc in self._accounts_data:
+                        if acc['id'] == value:
+                            value = acc['name']
+                            break
+                elif key == 'category':
+                    # If we have a category ID instead of a name, look up the name
+                    if isinstance(value, int):
+                        for cat in self._categories_data:
+                            if cat['id'] == value:
+                                value = cat['name']
+                                break
+                    # If the value is a string but matches an account name, it's likely a mistake
+                    # This fixes the issue where bank account names appear in the category column
+                    elif isinstance(value, str):
+                        is_account_name = False
+                        for acc in self._accounts_data:
+                            if acc['name'] == value:
+                                is_account_name = True
+                                break
+
+                        # If it's an account name or if it's not a valid category name, set to UNCATEGORIZED
+                        if is_account_name or value not in [cat['name'] for cat in self._categories_data]:
+                            # Find UNCATEGORIZED category for the current transaction type
+                            transaction_type = row_data.get('transaction_type', 'Expense')
+                            uncategorized_cat = None
+                            for cat in self._categories_data:
+                                if cat['name'] == 'UNCATEGORIZED' and cat['type'] == transaction_type:
+                                    uncategorized_cat = cat
+                                    break
+
+                            if uncategorized_cat:
+                                value = 'UNCATEGORIZED'
+                                # Update the underlying data to fix the issue
+                                row_data['category'] = 'UNCATEGORIZED'
+                                row_data['category_id'] = uncategorized_cat['id']
+
+                                # Find or create UNCATEGORIZED subcategory for this category
+                                uncategorized_subcat = None
+                                for subcat in self._subcategories_data:
+                                    if subcat['category_id'] == uncategorized_cat['id'] and subcat['name'] == 'UNCATEGORIZED':
+                                        uncategorized_subcat = subcat
+                                        break
+
+                                if uncategorized_subcat:
+                                    row_data['sub_category'] = 'UNCATEGORIZED'
+                                    row_data['sub_category_id'] = uncategorized_subcat['id']
+                                else:
+                                    # Create UNCATEGORIZED subcategory if it doesn't exist
+                                    uncategorized_id = self.db.ensure_subcategory('UNCATEGORIZED', uncategorized_cat['id'])
+                                    if uncategorized_id:
+                                        row_data['sub_category'] = 'UNCATEGORIZED'
+                                        row_data['sub_category_id'] = uncategorized_id
+                                        # Reload dropdown data in the background
+                                        QTimer.singleShot(0, self._load_dropdown_data)
+                elif key == 'sub_category':
+                    # If we have a subcategory ID instead of a name, look up the name
+                    if isinstance(value, int):
+                        for subcat in self._subcategories_data:
+                            if subcat['id'] == value:
+                                value = subcat['name']
+                                break
+                    # If the subcategory is empty or invalid but we have a category, set to UNCATEGORIZED
+                    elif row_data.get('category_id') is not None:
+                        # Check if the current subcategory is valid for this category
+                        is_valid = False
+                        if value:
+                            for subcat in self._subcategories_data:
+                                if subcat['category_id'] == row_data.get('category_id') and subcat['name'] == value:
+                                    is_valid = True
+                                    row_data['sub_category_id'] = subcat['id']
+                                    break
+
+                        # If not valid or if category is UNCATEGORIZED, set subcategory to UNCATEGORIZED
+                        category_is_uncategorized = False
+                        for cat in self._categories_data:
+                            if cat['id'] == row_data.get('category_id') and cat['name'] == 'UNCATEGORIZED':
+                                category_is_uncategorized = True
+                                break
+
+                        if not is_valid or category_is_uncategorized:
+                            # Find or create UNCATEGORIZED subcategory for this category
+                            category_id = row_data.get('category_id')
+                            if category_id is None:
+                                # If category_id is missing but we have a category name, try to find the ID
+                                category_name = row_data.get('category')
+                                transaction_type = row_data.get('transaction_type', 'Expense')
+                                if category_name:
+                                    for cat in self._categories_data:
+                                        if cat['name'] == category_name and cat['type'] == transaction_type:
+                                            category_id = cat['id']
+                                            row_data['category_id'] = category_id
+                                            break
+
+                            # If we still don't have a valid category_id, try to find UNCATEGORIZED
+                            if category_id is None:
+                                transaction_type = row_data.get('transaction_type', 'Expense')
+                                for cat in self._categories_data:
+                                    if cat['name'] == 'UNCATEGORIZED' and cat['type'] == transaction_type:
+                                        category_id = cat['id']
+                                        row_data['category'] = 'UNCATEGORIZED'
+                                        row_data['category_id'] = category_id
+                                        break
+
+                            uncategorized_id = None
+
+                            # Only proceed if we have a valid category_id
+                            if category_id is not None:
+                                # First check if UNCATEGORIZED already exists for this category
+                                for subcat in self._subcategories_data:
+                                    if subcat['category_id'] == category_id and subcat['name'] == 'UNCATEGORIZED':
+                                        uncategorized_id = subcat['id']
+                                        value = 'UNCATEGORIZED'
+                                        # Update the underlying data
+                                        row_data['sub_category'] = 'UNCATEGORIZED'
+                                        row_data['sub_category_id'] = uncategorized_id
+                                        break
+
+                                # If not found, create it
+                                if not uncategorized_id and self.db:
+                                    print(f"Creating UNCATEGORIZED subcategory for category ID {category_id}")
+                                    uncategorized_id = self.db.ensure_subcategory('UNCATEGORIZED', category_id)
+                                    if uncategorized_id:
+                                        value = 'UNCATEGORIZED'
+                                        # Update the underlying data
+                                        row_data['sub_category'] = 'UNCATEGORIZED'
+                                        row_data['sub_category_id'] = uncategorized_id
+                                        # Add to our local data
+                                        self._subcategories_data.append({
+                                            'id': uncategorized_id,
+                                            'name': 'UNCATEGORIZED',
+                                            'category_id': category_id
+                                        })
+                                        # Reload dropdown data in the background
+                                        QTimer.singleShot(0, self._load_dropdown_data)
+
                 item = self.tbl.item(r, c)
                 if item is None:
                     item = QTableWidgetItem()
@@ -1529,6 +1755,68 @@ class ExpenseTrackerGUI(QMainWindow):
                 # Use delegate's displayText for formatting (especially for numbers/dates)
                 # The delegate itself will need updating later for new types like account/category
                 display_text = delegate.displayText(value, self.locale) # Pass locale
+
+                # Special handling for category display
+                if key == 'category' and row_data.get('category_id'):
+                    # Ensure we display the correct category name based on the ID
+                    for cat in self._categories_data:
+                        if cat['id'] == row_data.get('category_id'):
+                            display_text = cat['name']
+                            break
+
+                # Special handling for subcategory display
+                if key == 'sub_category':
+                    # Debug print to see what's happening with subcategory values
+                    print(f"DEBUG SUBCATEGORY: Row {r}, ID={row_data.get('sub_category_id')}, Value='{value}', Display='{display_text}'")
+
+                    # Ensure we display the correct subcategory name based on the ID
+                    if row_data.get('sub_category_id'):
+                        found = False
+                        for subcat in self._subcategories_data:
+                            if subcat['id'] == row_data.get('sub_category_id'):
+                                # Verify this subcategory belongs to the current category
+                                if subcat['category_id'] == row_data.get('category_id'):
+                                    display_text = subcat['name']
+                                    found = True
+                                    print(f"DEBUG REFRESH: Found matching subcategory '{subcat['name']}' (ID: {subcat['id']}) for category ID {row_data.get('category_id')}")
+                                    break
+                                else:
+                                    print(f"WARNING: Subcategory ID {subcat['id']} belongs to category {subcat['category_id']}, not {row_data.get('category_id')}")
+
+                        if not found:
+                            # If we couldn't find the subcategory or it doesn't belong to the current category, force it to UNCATEGORIZED
+                            print(f"WARNING: Valid subcategory ID {row_data.get('sub_category_id')} not found for category ID {row_data.get('category_id')}")
+                            # Find the correct UNCATEGORIZED subcategory for this category
+                            category_id = row_data.get('category_id')
+                            if category_id:
+                                uncategorized_found = False
+                                for subcat in self._subcategories_data:
+                                    if subcat['category_id'] == category_id and subcat['name'] == 'UNCATEGORIZED':
+                                        display_text = 'UNCATEGORIZED'
+                                        row_data['sub_category'] = 'UNCATEGORIZED'
+                                        row_data['sub_category_id'] = subcat['id']
+                                        uncategorized_found = True
+                                        print(f"Fixed: Set subcategory to UNCATEGORIZED (ID: {subcat['id']})")
+                                        break
+
+                                # If we couldn't find an UNCATEGORIZED subcategory, create one
+                                if not uncategorized_found and self.db:
+                                    print(f"Creating UNCATEGORIZED subcategory for category ID {category_id}")
+                                    uncategorized_id = self.db.ensure_subcategory('UNCATEGORIZED', category_id)
+                                    if uncategorized_id:
+                                        display_text = 'UNCATEGORIZED'
+                                        row_data['sub_category'] = 'UNCATEGORIZED'
+                                        row_data['sub_category_id'] = uncategorized_id
+                                        print(f"Created and set subcategory to UNCATEGORIZED (ID: {uncategorized_id})")
+                                        # Add to our local data
+                                        self._subcategories_data.append({
+                                            'id': uncategorized_id,
+                                            'name': 'UNCATEGORIZED',
+                                            'category_id': category_id
+                                        })
+                                        # Reload dropdown data in the background
+                                        QTimer.singleShot(0, self._load_dropdown_data)
+
                 item.setText(display_text)
                 item.setFont(font)
                 item.setForeground(color_text)
