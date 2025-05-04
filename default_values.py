@@ -3,12 +3,11 @@ Default Values Module for Financial Tracker
 
 This module provides functionality to store and manage default values for transaction fields.
 """
-
-import os
 import json
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from PyQt6.QtCore import QDate
+from PyQt6.QtWidgets import QLineEdit, QComboBox, QDateEdit
 
 from debug_config import debug_config, debug_print
 
@@ -17,282 +16,180 @@ DEFAULT_VALUES_FILE = "default_values.json"
 
 class DefaultValues:
     """Class for managing default values for transaction fields"""
-    
+
+    # Define the fields that can have defaults
+    # Use the keys expected by the form_widgets dictionary in the main GUI
+    DEFAULTABLE_FIELDS = [
+        'name_in', 'value_in', 'type_in', 'account_in',
+        'cat_in', 'subcat_in', 'desc_in', 'date_in'
+    ]
+
+    # Map form widget keys to the keys used in the transaction data dictionary
+    FORM_TO_DATA_MAP = {
+        'name_in': 'transaction_name',
+        'value_in': 'transaction_value',
+        'type_in': 'transaction_type',
+        'account_in': 'account_id', # Store ID
+        'cat_in': 'category_id',    # Store ID
+        'subcat_in': 'sub_category_id', # Store ID
+        'desc_in': 'transaction_description',
+        'date_in': 'transaction_date' # Store ISO string
+    }
+
     def __init__(self):
-        # Initialize with empty default values
-        self.values = {
-            'transaction_name': '',
-            'transaction_value': '',
-            'transaction_type': '',
-            'account_id': None,
-            'account': '',
-            'category_id': None,
-            'category': '',
-            'sub_category_id': None,
-            'sub_category': '',
-            'transaction_description': '',
-            'transaction_date': ''
-        }
-        
-        # Flag to indicate if default values are enabled
-        self.enabled = False
-        
-        # Load saved default values
-        self.load_values()
-    
-    def set_value(self, field, value):
-        """Set a default value for a specific field"""
-        debug_print('DEFAULT_VALUES', f"Setting default value for {field}: {value}")
-        if field in self.values:
-            self.values[field] = value
-            return True
-        return False
-    
-    def get_value(self, field):
-        """Get the default value for a specific field"""
-        return self.values.get(field)
-    
-    def clear_values(self):
-        """Clear all default values"""
-        debug_print('DEFAULT_VALUES', "Clearing all default values")
-        self.values = {
-            'transaction_name': '',
-            'transaction_value': '',
-            'transaction_type': '',
-            'account_id': None,
-            'account': '',
-            'category_id': None,
-            'category': '',
-            'sub_category_id': None,
-            'sub_category': '',
-            'transaction_description': '',
-            'transaction_date': ''
-        }
-        self.enabled = False
-    
-    def enable(self):
-        """Enable the use of default values"""
-        debug_print('DEFAULT_VALUES', "Enabling default values")
-        self.enabled = True
-    
-    def disable(self):
-        """Disable the use of default values"""
-        debug_print('DEFAULT_VALUES', "Disabling default values")
-        self.enabled = False
-    
-    def is_enabled(self):
-        """Check if default values are enabled"""
-        return self.enabled
-    
-    def save_values(self):
-        """Save default values to a JSON file"""
+        """Initialize and load default values from file."""
+        self._defaults = {}
+        self.load()
+
+    def load(self):
+        """Load default values from the JSON file."""
         try:
-            # Convert values to serializable format
-            serializable_values = self.values.copy()
-            
-            # Handle special types
-            if isinstance(serializable_values['transaction_value'], Decimal):
-                serializable_values['transaction_value'] = str(serializable_values['transaction_value'])
-            
-            # Create a dictionary with values and enabled state
-            data_to_save = {
-                'values': serializable_values,
-                'enabled': self.enabled
-            }
-            
+            with open(DEFAULT_VALUES_FILE, 'r') as f:
+                loaded_defaults = json.load(f)
+                # Validate loaded keys against known fields
+                self._defaults = {k: v for k, v in loaded_defaults.items() if k in self.DEFAULTABLE_FIELDS}
+                debug_print('DEFAULTS', f"Loaded defaults: {self._defaults}")
+        except FileNotFoundError:
+            debug_print('DEFAULTS', f"Defaults file '{DEFAULT_VALUES_FILE}' not found. Using empty defaults.")
+            self._defaults = {}
+        except json.JSONDecodeError:
+            debug_print('DEFAULTS', f"Error decoding JSON from '{DEFAULT_VALUES_FILE}'. Using empty defaults.")
+            self._defaults = {}
+        except Exception as e:
+            debug_print('DEFAULTS', f"Error loading defaults: {e}. Using empty defaults.")
+            self._defaults = {}
+
+    def save(self):
+        """Save the current default values to the JSON file."""
+        try:
             with open(DEFAULT_VALUES_FILE, 'w') as f:
-                json.dump(data_to_save, f, indent=4)
-            debug_print('DEFAULT_VALUES', "Default values saved to file")
+                json.dump(self._defaults, f, indent=4)
+                debug_print('DEFAULTS', f"Saved defaults: {self._defaults}")
         except Exception as e:
-            print(f"Error saving default values: {e}")
-    
-    def load_values(self):
-        """Load default values from a JSON file"""
-        try:
-            if os.path.exists(DEFAULT_VALUES_FILE):
-                with open(DEFAULT_VALUES_FILE, 'r') as f:
-                    data = json.load(f)
-                
-                # Load values
-                if 'values' in data:
-                    loaded_values = data['values']
-                    
-                    # Handle special types
-                    if 'transaction_value' in loaded_values and loaded_values['transaction_value']:
-                        try:
-                            loaded_values['transaction_value'] = Decimal(loaded_values['transaction_value'])
-                        except:
-                            loaded_values['transaction_value'] = ''
-                    
-                    # Update values
-                    for field, value in loaded_values.items():
-                        if field in self.values:
-                            self.values[field] = value
-                
-                # Load enabled state
-                if 'enabled' in data:
-                    self.enabled = data['enabled']
-                
-                debug_print('DEFAULT_VALUES', "Default values loaded from file")
-        except Exception as e:
-            print(f"Error loading default values: {e}")
-    
-    def apply_to_form(self, form_widgets):
-        """Apply default values to form widgets"""
-        if not self.enabled:
-            return
-        
-        debug_print('DEFAULT_VALUES', "Applying default values to form")
-        
-        # Apply name
-        if self.values['transaction_name'] and 'name_in' in form_widgets:
-            form_widgets['name_in'].setText(self.values['transaction_name'])
-        
-        # Apply value
-        if self.values['transaction_value'] and 'value_in' in form_widgets:
-            if isinstance(self.values['transaction_value'], Decimal):
-                form_widgets['value_in'].setText(str(self.values['transaction_value']))
-            else:
-                form_widgets['value_in'].setText(self.values['transaction_value'])
-        
-        # Apply type
-        if self.values['transaction_type'] and 'type_in' in form_widgets:
-            index = form_widgets['type_in'].findText(self.values['transaction_type'])
-            if index >= 0:
-                form_widgets['type_in'].setCurrentIndex(index)
-        
-        # Apply account
-        if self.values['account'] and 'account_in' in form_widgets:
-            index = form_widgets['account_in'].findText(self.values['account'])
-            if index >= 0:
-                form_widgets['account_in'].setCurrentIndex(index)
-        
-        # Apply category
-        if self.values['category'] and 'cat_in' in form_widgets:
-            index = form_widgets['cat_in'].findText(self.values['category'])
-            if index >= 0:
-                form_widgets['cat_in'].setCurrentIndex(index)
-        
-        # Apply subcategory
-        if self.values['sub_category'] and 'subcat_in' in form_widgets:
-            index = form_widgets['subcat_in'].findText(self.values['sub_category'])
-            if index >= 0:
-                form_widgets['subcat_in'].setCurrentIndex(index)
-        
-        # Apply description
-        if self.values['transaction_description'] and 'desc_in' in form_widgets:
-            form_widgets['desc_in'].setText(self.values['transaction_description'])
-        
-        # Apply date
-        if self.values['transaction_date'] and 'date_in' in form_widgets:
+            debug_print('DEFAULTS', f"Error saving defaults: {e}")
+
+    def get_value(self, field_key):
+        """Get the default value for a specific field key."""
+        return self._defaults.get(field_key)
+
+    def set_value(self, field_key, value):
+        """Set a default value for a field key and save."""
+        if field_key in self.DEFAULTABLE_FIELDS:
+            # Basic type handling for saving (ensure JSON compatibility)
+            if isinstance(value, Decimal):
+                value = str(value) # Store Decimals as strings
+            elif isinstance(value, QDate):
+                value = value.toString("yyyy-MM-dd") # Store QDate as ISO string
+            elif value is None:
+                 # Allow explicitly clearing a default
+                 if field_key in self._defaults:
+                     del self._defaults[field_key]
+                     debug_print('DEFAULTS', f"Cleared default for '{field_key}'")
+                     self.save()
+                 return # Don't store None
+
+            if self._defaults.get(field_key) != value:
+                self._defaults[field_key] = value
+                debug_print('DEFAULTS', f"Set default '{field_key}' to '{value}'")
+                self.save()
+        else:
+            debug_print('DEFAULTS', f"Warning: Attempted to set default for unknown field '{field_key}'")
+
+    def get_all(self):
+        """Return a copy of the current defaults dictionary."""
+        return self._defaults.copy()
+
+    def apply_to_form(self, widgets):
+        """Apply stored default values to the form widgets."""
+        debug_print('DEFAULTS', f"Applying defaults to form widgets...")
+        for field_key, widget in widgets.items():
+            default_value = self.get_value(field_key)
+            if default_value is None:
+                continue
+
             try:
-                date = QDate.fromString(self.values['transaction_date'], 'yyyy-MM-dd')
-                if date.isValid():
-                    form_widgets['date_in'].setDate(date)
-            except:
-                pass
-    
+                if isinstance(widget, QLineEdit):
+                    # Handle Decimal conversion for value field
+                    if field_key == 'value_in':
+                        try:
+                            val_decimal = Decimal(str(default_value))
+                            widget.setText(str(val_decimal.quantize(Decimal("0.00"))))
+                        except (InvalidOperation, TypeError, ValueError):
+                            widget.setText("0.00") # Fallback
+                    else:
+                        widget.setText(str(default_value))
+                    debug_print('DEFAULTS', f"  Applied '{default_value}' to QLineEdit '{field_key}'")
+
+                elif isinstance(widget, QComboBox):
+                    # Handle different combo box types
+                    if field_key == 'type_in':
+                        # Type is stored as text ('Income'/'Expense')
+                        index = widget.findText(str(default_value))
+                        if index != -1:
+                            widget.setCurrentIndex(index)
+                            debug_print('DEFAULTS', f"  Applied '{default_value}' (text) to QComboBox '{field_key}'")
+                        else:
+                            debug_print('DEFAULTS', f"  Warning: Default text '{default_value}' not found in QComboBox '{field_key}'")
+                    else:
+                        # Account, Category, SubCategory store ID
+                        try:
+                            value_id = int(default_value)
+                            index = widget.findData(value_id)
+                            if index != -1:
+                                widget.setCurrentIndex(index)
+                                debug_print('DEFAULTS', f"  Applied ID '{value_id}' to QComboBox '{field_key}'")
+                            else:
+                                debug_print('DEFAULTS', f"  Warning: Default ID '{value_id}' not found in QComboBox '{field_key}'")
+                        except (ValueError, TypeError):
+                            debug_print('DEFAULTS', f"  Warning: Invalid ID format '{default_value}' for QComboBox '{field_key}'")
+
+                elif isinstance(widget, QDateEdit):
+                    # Date is stored as ISO string "yyyy-MM-dd"
+                    date = QDate.fromString(str(default_value), "yyyy-MM-dd")
+                    if date.isValid():
+                        widget.setDate(date)
+                        debug_print('DEFAULTS', f"  Applied '{default_value}' (date) to QDateEdit '{field_key}'")
+                    else:
+                         # Fallback to current date if stored format is invalid
+                         widget.setDate(QDate.currentDate())
+                         debug_print('DEFAULTS', f"  Warning: Invalid date format '{default_value}' for QDateEdit '{field_key}'. Used current date.")
+
+            except Exception as e:
+                debug_print('DEFAULTS', f"  Error applying default for '{field_key}': {e}")
+        debug_print('DEFAULTS', "...Finished applying defaults to form.")
+
     def apply_to_new_row(self, row_data):
-        """Apply default values to a new row data dictionary"""
-        if not self.enabled:
-            return row_data
-        
-        debug_print('DEFAULT_VALUES', "Applying default values to new row")
-        
-        # Create a copy of the row data
-        new_row = row_data.copy()
-        
-        # Apply name
-        if self.values['transaction_name']:
-            new_row['transaction_name'] = self.values['transaction_name']
-        
-        # Apply value
-        if self.values['transaction_value']:
-            if isinstance(self.values['transaction_value'], Decimal):
-                new_row['transaction_value'] = self.values['transaction_value']
-            else:
+        """
+        Apply stored default values to a new row data dictionary.
+        Modifies the dictionary in place.
+        Returns the modified dictionary.
+        """
+        debug_print('DEFAULTS', f"Applying defaults to new row data...")
+        for form_key, data_key in self.FORM_TO_DATA_MAP.items():
+            default_value = self.get_value(form_key)
+            if default_value is not None:
                 try:
-                    new_row['transaction_value'] = Decimal(self.values['transaction_value'])
-                except:
-                    pass
-        
-        # Apply type
-        if self.values['transaction_type']:
-            new_row['transaction_type'] = self.values['transaction_type']
-        
-        # Apply account
-        if self.values['account_id'] is not None:
-            new_row['account_id'] = self.values['account_id']
-            new_row['account'] = self.values['account']
-        
-        # Apply category
-        if self.values['category_id'] is not None:
-            new_row['category_id'] = self.values['category_id']
-            new_row['category'] = self.values['category']
-        
-        # Apply subcategory
-        if self.values['sub_category_id'] is not None:
-            new_row['sub_category_id'] = self.values['sub_category_id']
-            new_row['sub_category'] = self.values['sub_category']
-        
-        # Apply description
-        if self.values['transaction_description']:
-            new_row['transaction_description'] = self.values['transaction_description']
-        
-        # Apply date
-        if self.values['transaction_date']:
-            new_row['transaction_date'] = self.values['transaction_date']
-        
-        return new_row
-    
-    def update_from_form(self, form_widgets):
-        """Update default values from form widgets"""
-        debug_print('DEFAULT_VALUES', "Updating default values from form")
-        
-        # Update name
-        if 'name_in' in form_widgets:
-            self.values['transaction_name'] = form_widgets['name_in'].text()
-        
-        # Update value
-        if 'value_in' in form_widgets:
-            value_text = form_widgets['value_in'].text()
-            if value_text:
-                try:
-                    self.values['transaction_value'] = Decimal(value_text)
-                except:
-                    self.values['transaction_value'] = value_text
-            else:
-                self.values['transaction_value'] = ''
-        
-        # Update type
-        if 'type_in' in form_widgets:
-            self.values['transaction_type'] = form_widgets['type_in'].currentText()
-        
-        # Update account
-        if 'account_in' in form_widgets:
-            self.values['account'] = form_widgets['account_in'].currentText()
-            self.values['account_id'] = form_widgets['account_in'].currentData()
-        
-        # Update category
-        if 'cat_in' in form_widgets:
-            self.values['category'] = form_widgets['cat_in'].currentText()
-            self.values['category_id'] = form_widgets['cat_in'].currentData()
-        
-        # Update subcategory
-        if 'subcat_in' in form_widgets:
-            self.values['sub_category'] = form_widgets['subcat_in'].currentText()
-            self.values['sub_category_id'] = form_widgets['subcat_in'].currentData()
-        
-        # Update description
-        if 'desc_in' in form_widgets:
-            self.values['transaction_description'] = form_widgets['desc_in'].text()
-        
-        # Update date
-        if 'date_in' in form_widgets:
-            self.values['transaction_date'] = form_widgets['date_in'].date().toString('yyyy-MM-dd')
-        
-        # Save the updated values
-        self.save_values()
+                    # Apply type conversion as needed for the data dictionary
+                    if data_key == 'transaction_value':
+                        row_data[data_key] = Decimal(str(default_value))
+                    elif data_key.endswith('_id'): # account_id, category_id, sub_category_id
+                        row_data[data_key] = int(default_value)
+                    elif data_key == 'transaction_date':
+                        # Ensure it's a valid ISO date string, otherwise use current date
+                        try:
+                            datetime.strptime(str(default_value), '%Y-%m-%d')
+                            row_data[data_key] = str(default_value)
+                        except ValueError:
+                            row_data[data_key] = datetime.now().strftime('%Y-%m-%d')
+                    else: # transaction_name, transaction_type, transaction_description
+                        row_data[data_key] = str(default_value)
+                    debug_print('DEFAULTS', f"  Applied default '{default_value}' to new row key '{data_key}'")
+                except (ValueError, TypeError, InvalidOperation) as e:
+                     debug_print('DEFAULTS', f"  Warning: Could not apply default for '{form_key}' to data key '{data_key}': {e}")
+
+        debug_print('DEFAULTS', f"...Finished applying defaults to new row. Result: {row_data}")
+        return row_data
+
 
 # Create a global instance for use throughout the application
 default_values = DefaultValues()

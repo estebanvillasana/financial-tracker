@@ -10,7 +10,7 @@ from decimal import Decimal, InvalidOperation # Import Decimal
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QTableWidget, QTableWidgetItem,
                              QPushButton, QLineEdit, QComboBox, QLabel,
-                             QMessageBox, QHeaderView, QAbstractItemView, QFrame,
+                             QMessageBox, QHeaderView, QAbstractItemView, QFrame, QDialog,
                              QGridLayout, QGroupBox, QDateEdit, QToolButton,
                              QStyle, QToolBar, QTableWidgetSelectionRange)
 # Import QEvent for eventFilter
@@ -25,6 +25,8 @@ from commands import CellEditCommand
 from column_config import TRANSACTION_COLUMNS, DB_FIELDS, DISPLAY_TITLES, get_column_config
 from custom_widgets import ArrowComboBox, ArrowDateEdit
 from custom_style import CustomProxyStyle
+from default_values import default_values
+from default_values_ui import show_default_values_dialog
 from debug_config import debug_config, debug_print
 
 class ExpenseTrackerGUI(QMainWindow):
@@ -45,6 +47,7 @@ class ExpenseTrackerGUI(QMainWindow):
         self.last_saved_undo_index = 0
         self.selected_rows = set()
         self.locale = QLocale() # Add locale for consistent formatting
+        self.form_widgets = {} # Dictionary to hold form input widgets
 
         # Initialize dropdown data
         self._accounts_data = []
@@ -55,6 +58,8 @@ class ExpenseTrackerGUI(QMainWindow):
         self._load_dropdown_data() # Load dropdown data first
         self._load_transactions() # Then load transactions
         self._populate_initial_form_dropdowns() # Populate dropdowns based on loaded data
+        # Apply default values to the form inputs on startup
+        default_values.apply_to_form(self.form_widgets)
 
         # Pass data sources to the delegate
         delegate = self.tbl.itemDelegate()
@@ -194,24 +199,30 @@ class ExpenseTrackerGUI(QMainWindow):
         form_grid.setVerticalSpacing(10)
         form_group.setLayout(form_grid)
 
+        # Create and register form widgets
         self.name_in = QLineEdit(placeholderText='Transaction Name')
         self.value_in = QLineEdit(placeholderText='Value (e.g., 12.34)')
         self.type_in = ArrowComboBox()
         self.type_in.addItems(['Expense', 'Income'])
-        self.type_in.setPlaceholderText('Type')
         self.account_in = ArrowComboBox()
-        self.account_in.setPlaceholderText('Select Account')
         self.cat_in = ArrowComboBox()
-        self.cat_in.setPlaceholderText('Select Category')
         self.subcat_in = ArrowComboBox()
-        self.subcat_in.setPlaceholderText('Select Sub Category')
-
-        # We're using ArrowComboBox which has its own styling
-        # No need to set additional styles here
         self.desc_in = QLineEdit(placeholderText='Description')
         self.date_in = ArrowDateEdit(parent=self)
         self.date_in.setDate(QDate.currentDate())
         self.date_in.setDisplayFormat("dd MMM yyyy")
+
+        # Register form widgets for default values dialog and application
+        self.form_widgets = {
+            'name_in': self.name_in,
+            'value_in': self.value_in,
+            'type_in': self.type_in,
+            'account_in': self.account_in,
+            'cat_in': self.cat_in,
+            'subcat_in': self.subcat_in,
+            'desc_in': self.desc_in,
+            'date_in': self.date_in
+        }
 
         form_grid.addWidget(QLabel('Name:'), 0, 0)
         form_grid.addWidget(self.name_in, 0, 1)
@@ -233,7 +244,15 @@ class ExpenseTrackerGUI(QMainWindow):
         self.add_btn = QPushButton('Add Transaction')
         self.add_btn.setIcon(QIcon.fromTheme("list-add", QIcon(":/icons/add.png")))
         self.add_btn.clicked.connect(self._add_form)
-        form_grid.addWidget(self.add_btn, 5, 0, 1, 4, alignment=Qt.AlignmentFlag.AlignCenter)
+        form_grid.addWidget(self.add_btn, 5, 0, 1, 2) # Span 2 columns
+
+        # Button to open Default Values dialog
+        self.defaults_btn = QPushButton('Defaults')
+        self.defaults_btn.setIcon(QIcon.fromTheme("preferences-system", QIcon(":/icons/settings.png")))
+        self.defaults_btn.setToolTip("Set default values for new transactions")
+        self.defaults_btn.clicked.connect(self._open_default_values)
+        form_grid.addWidget(self.defaults_btn, 5, 2, 1, 2) # Span 2 columns
+
         root.addWidget(form_group)
         # --- End Form Group ---
 
@@ -331,6 +350,15 @@ class ExpenseTrackerGUI(QMainWindow):
 
         # Connect resize event to update column widths
         self.tbl.horizontalHeader().sectionResized.connect(self._update_column_widths)
+
+    def _open_default_values(self):
+        """Open dialog to manage defaults, then reapply them to the form."""
+        # Pass the dictionary of form widgets
+        result = show_default_values_dialog(self, self.form_widgets)
+        if result == QDialog.DialogCode.Accepted:
+            # Re-apply defaults to the form immediately after saving them
+            default_values.apply_to_form(self.form_widgets)
+            self._show_message("Default values updated.", error=False)
 
     def _ensure_uncategorized_subcategories(self):
         """Ensure every category has an UNCATEGORIZED subcategory."""
@@ -650,22 +678,15 @@ class ExpenseTrackerGUI(QMainWindow):
         )
 
         if new_rowid is not None:
-            for w in (self.name_in,self.value_in,self.desc_in): w.clear()
-            # Reset category to 'UNCATEGORIZED' or first item
-            uncategorized_index = self.cat_in.findText('UNCATEGORIZED')
-            if uncategorized_index != -1:
-                self.cat_in.setCurrentIndex(uncategorized_index)
-            elif self.cat_in.count() > 0:
-                 self.cat_in.setCurrentIndex(0)
-            else:
-                 self.cat_in.setPlaceholderText('Select Category') # Should not happen if UNCATEGORIZED exists
-
-            self.date_in.setDate(QDate.currentDate()) # Reset date
+            # Instead of clearing, apply the defaults to reset the form
+            default_values.apply_to_form(self.form_widgets)
             self._load_transactions();
             # _load_categories() is called via timer in _ensure_category if needed
             self._show_message('Transaction added!', error=False)
 
             self.last_saved_undo_index = self.undo_stack.index()
+        else:
+            self._show_message('Failed to add transaction.', error=True)
 
     def _cell_edited(self, row, col):
         # This signal is emitted *after* the data in the model has changed.
@@ -764,80 +785,111 @@ class ExpenseTrackerGUI(QMainWindow):
                 self.pending[pending_idx]['account_id'] = account_id
 
     def _add_blank_row(self, focus_col=0):
-        # --- Initialize Default Variables --- #
-        default_type = 'Expense' # Direct assignment is fine
-        default_account_id = None
-        default_category_id = None
-        default_subcategory_id = None
-
-        # --- Determine Defaults for a Blank Row --- #
-        # Account: Try to use the first account, otherwise it will be invalid
-        default_account_id = self._accounts_data[0]['id'] if self._accounts_data else None
-        if default_account_id is None:
-            self._show_message("Cannot add blank row: No bank accounts exist.", error=True)
-            return # Don't add row if no accounts
-
-        # Category: Find default 'Expense' UNCATEGORIZED ID
-        # default_category_id is already None
-        for cat in self._categories_data:
-            if cat['type'] == default_type and cat['name'] == 'UNCATEGORIZED':
-                default_category_id = cat['id']
-                break
-        if default_category_id is None:
-            # Attempt to create it if missing (should ideally exist from default data)
-            print("Warning: Default Expense UNCATEGORIZED category not found, attempting creation.")
-            default_category_id = self.db.ensure_category('UNCATEGORIZED', default_type)
-            if default_category_id:
-                self._load_dropdown_data() # Reload if created
-            else:
-                 self._show_message("Cannot add blank row: Could not find/create default category.", error=True)
-                 return
-
-        # Subcategory: Find default UNCATEGORIZED for the default category ID
-        # default_subcategory_id is already None
-        for subcat in self._subcategories_data:
-            if subcat['category_id'] == default_category_id and subcat['name'] == 'UNCATEGORIZED':
-                default_subcategory_id = subcat['id']
-                break
-        if default_subcategory_id is None:
-            print(f"Warning: Default UNCATEGORIZED subcategory for category {default_category_id} not found, attempting creation.")
-            default_subcategory_id = self.db.ensure_subcategory('UNCATEGORIZED', default_category_id)
-            if default_subcategory_id:
-                 self._load_dropdown_data() # Reload if created
-            else:
-                self._show_message("Cannot add blank row: Could not find/create default subcategory.", error=True)
-                return
-
-        # Use defaults consistent with the form and delegate
-        # Pylance should now see these as defined earlier
+        # --- Initialize Base Structure --- #
+        # Start with a completely blank structure matching DB fields
         new_row_data = {
             'transaction_name': '',
-            'transaction_value': Decimal('0.00'), # Use Decimal
-            'transaction_type': default_type,
-            'account_id': default_account_id,
-            'category_id': default_category_id,
-            'sub_category_id': default_subcategory_id,
+            'transaction_value': Decimal('0.00'),
+            'transaction_type': 'Expense', # A sensible baseline
+            'account_id': None,
+            'category_id': None,
+            'sub_category_id': None,
             'transaction_description': '',
             'transaction_date': datetime.now().strftime('%Y-%m-%d'),
-            # Also add the names for display consistency if needed by _refresh initially
-            'account': self._accounts_data[0]['name'] if self._accounts_data else 'N/A',
-            'category': 'UNCATEGORIZED',
-            'sub_category': 'UNCATEGORIZED'
+            # Name fields will be populated after applying defaults or from DB lookups
+            'account': '',
+            'category': '',
+            'sub_category': ''
         }
+
+        # --- Apply Defaults ---
+        new_row_data = default_values.apply_to_new_row(new_row_data)
+
+        # --- Populate Names based on IDs (after defaults applied) ---
+        # Account Name
+        if new_row_data.get('account_id') is not None:
+            for acc in self._accounts_data:
+                if acc['id'] == new_row_data['account_id']:
+                    new_row_data['account'] = acc['name']
+                    break
+        elif self._accounts_data: # If no default ID, use first account as fallback?
+             new_row_data['account_id'] = self._accounts_data[0]['id']
+             new_row_data['account'] = self._accounts_data[0]['name']
+
+        # Category Name (depends on Type)
+        current_type = new_row_data.get('transaction_type', 'Expense')
+        if new_row_data.get('category_id') is not None:
+            for cat in self._categories_data:
+                if cat['id'] == new_row_data['category_id'] and cat['type'] == current_type:
+                    new_row_data['category'] = cat['name']
+                    break
+            # If ID is invalid for type, try finding UNCATEGORIZED for the type
+            if not new_row_data['category']:
+                 for cat in self._categories_data:
+                      if cat['name'] == 'UNCATEGORIZED' and cat['type'] == current_type:
+                           new_row_data['category_id'] = cat['id']
+                           new_row_data['category'] = cat['name']
+                           break
+
+        # Subcategory Name (depends on Category)
+        current_cat_id = new_row_data.get('category_id')
+        if current_cat_id is not None and new_row_data.get('sub_category_id') is not None:
+            for subcat in self._subcategories_data:
+                if subcat['id'] == new_row_data['sub_category_id'] and subcat['category_id'] == current_cat_id:
+                    new_row_data['sub_category'] = subcat['name']
+                    break
+            # If ID is invalid for category, try finding UNCATEGORIZED for the category
+            if not new_row_data['sub_category']:
+                 for subcat in self._subcategories_data:
+                      if subcat['name'] == 'UNCATEGORIZED' and subcat['category_id'] == current_cat_id:
+                           new_row_data['sub_category_id'] = subcat['id']
+                           new_row_data['sub_category'] = subcat['name']
+                           break
+
+        # --- Final Checks & Add to Pending ---
+        # Ensure essential fields have fallbacks if defaults didn't provide them
+        if new_row_data.get('account_id') is None:
+             if self._accounts_data:
+                 new_row_data['account_id'] = self._accounts_data[0]['id']
+                 new_row_data['account'] = self._accounts_data[0]['name']
+             else:
+                 self._show_message("Cannot add row: No accounts available.", error=True); return
+
+        if new_row_data.get('category_id') is None:
+             # Find or create UNCATEGORIZED for the current type
+             cat_type = new_row_data.get('transaction_type', 'Expense')
+             uncat_id = self.db.ensure_category('UNCATEGORIZED', cat_type)
+             if uncat_id:
+                 new_row_data['category_id'] = uncat_id
+                 new_row_data['category'] = 'UNCATEGORIZED'
+                 QTimer.singleShot(0, self._load_dropdown_data) # Reload if created
+             else:
+                 self._show_message("Cannot add row: Failed to set default category.", error=True); return
+
+        if new_row_data.get('sub_category_id') is None and new_row_data.get('category_id') is not None:
+             # Find or create UNCATEGORIZED for the current category
+             cat_id = new_row_data['category_id']
+             subcat_id = self.db.ensure_subcategory('UNCATEGORIZED', cat_id)
+             if subcat_id:
+                 new_row_data['sub_category_id'] = subcat_id
+                 new_row_data['sub_category'] = 'UNCATEGORIZED'
+                 QTimer.singleShot(0, self._load_dropdown_data) # Reload if created
+             else:
+                 # Don't fail row add, validation will catch it if required
+                 pass
+
+
         self.pending.append(new_row_data)
         self._refresh()
 
         new_row_index = len(self.transactions) + len(self.pending) - 1
-        if new_row_index >= 0:
+        if new_row_index >= 0 and focus_col >= 0: # Only focus if focus_col is valid
             # Ensure the new row is visible and selected
             self.tbl.scrollToItem(self.tbl.item(new_row_index, 0), QAbstractItemView.ScrollHint.EnsureVisible)
             self.tbl.setCurrentCell(new_row_index, focus_col)
-            # Do NOT call self.tbl.edit() here.
-            # The eventFilter or delegate's setEditorData will handle starting the edit
-            # if the user types or double-clicks after the cell is current.
 
-            # Print the table contents to the terminal
-            self._debug_print_table()
+        # Print the table contents to the terminal
+        self._debug_print_table()
 
     def _recolor_row(self, row):
         if row < 0 or row >= self.tbl.rowCount(): return # Added bounds check
@@ -2341,7 +2393,6 @@ class ExpenseTrackerGUI(QMainWindow):
                 if row < num_transactions and self.transactions[row].get('rowid') in self.dirty:
                     rowid = self.transactions[row].get('rowid')
                     original = self._original_data_cache.get(rowid, {})
-
                     # Check which fields are modified
                     if original.get('transaction_name') != self.transactions[row].get('transaction_name'):
                         modified_fields.append(0)  # Transaction Name column
