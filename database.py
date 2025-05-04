@@ -205,6 +205,29 @@ class Database:
             return None
 
         cursor = self.conn.cursor()
+
+        # Check if category is UNCATEGORIZED, if so, ensure subcategory is also UNCATEGORIZED
+        try:
+            # Check if this is an UNCATEGORIZED category
+            cursor.execute("SELECT category FROM categories WHERE id = ?", (category_id,))
+            result = cursor.fetchone()
+            if result and result['category'] == 'UNCATEGORIZED':
+                # Find UNCATEGORIZED subcategory for this category
+                cursor.execute("SELECT id FROM sub_categories WHERE category_id = ? AND sub_category = 'UNCATEGORIZED'", (category_id,))
+                subcat_result = cursor.fetchone()
+                if subcat_result:
+                    # Set subcategory to UNCATEGORIZED
+                    sub_category_id = subcat_result['id']
+                    print(f"Category is UNCATEGORIZED, setting subcategory to UNCATEGORIZED (ID: {sub_category_id})")
+                else:
+                    # Create UNCATEGORIZED subcategory if it doesn't exist
+                    uncat_subcat_id = self.ensure_subcategory('UNCATEGORIZED', category_id)
+                    if uncat_subcat_id:
+                        sub_category_id = uncat_subcat_id
+                        print(f"Created and set UNCATEGORIZED subcategory (ID: {uncat_subcat_id}) for UNCATEGORIZED category")
+        except sqlite3.Error as e:
+            print(f"Error checking category for UNCATEGORIZED: {e}")
+
         try:
              # Use reverted column names in the INSERT statement
             cursor.execute("""
@@ -407,6 +430,31 @@ class Database:
     def update_transaction(self, transaction_id: int, data: Dict) -> bool:
         """Updates an existing transaction."""
         if not self.conn: return False
+
+        # Check if category is UNCATEGORIZED, if so, ensure subcategory is also UNCATEGORIZED
+        if 'transaction_category' in data:
+            category_id = data['transaction_category']
+            cursor = self.conn.cursor()
+            try:
+                # Check if this is an UNCATEGORIZED category
+                cursor.execute("SELECT category FROM categories WHERE id = ?", (category_id,))
+                result = cursor.fetchone()
+                if result and result['category'] == 'UNCATEGORIZED':
+                    # Find UNCATEGORIZED subcategory for this category
+                    cursor.execute("SELECT id FROM sub_categories WHERE category_id = ? AND sub_category = 'UNCATEGORIZED'", (category_id,))
+                    subcat_result = cursor.fetchone()
+                    if subcat_result:
+                        # Set subcategory to UNCATEGORIZED
+                        data['transaction_sub_category'] = subcat_result['id']
+                        print(f"Category is UNCATEGORIZED, setting subcategory to UNCATEGORIZED (ID: {subcat_result['id']})")
+                    else:
+                        # Create UNCATEGORIZED subcategory if it doesn't exist
+                        uncat_subcat_id = self.ensure_subcategory('UNCATEGORIZED', category_id)
+                        if uncat_subcat_id:
+                            data['transaction_sub_category'] = uncat_subcat_id
+                            print(f"Created and set UNCATEGORIZED subcategory (ID: {uncat_subcat_id}) for UNCATEGORIZED category")
+            except sqlite3.Error as e:
+                print(f"Error checking category for UNCATEGORIZED: {e}")
 
         # Construct SET clause dynamically but safely
         set_parts = []
