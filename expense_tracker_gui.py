@@ -23,6 +23,7 @@ from delegates import SpreadsheetDelegate
 from commands import CellEditCommand
 from column_config import TRANSACTION_COLUMNS, DB_FIELDS, DISPLAY_TITLES, get_column_config
 from custom_widgets import ArrowComboBox
+from custom_style import CustomProxyStyle
 
 class ExpenseTrackerGUI(QMainWindow):
     # Define the columns for the *display* table (match the data we'll fetch)
@@ -81,6 +82,11 @@ class ExpenseTrackerGUI(QMainWindow):
             QLineEdit:focus, QComboBox:focus, QDateEdit:focus {
                 border: 1.5px solid #4fc3f7;
             }
+
+            ArrowComboBox:focus {
+                border: 1.5px solid #4fc3f7;
+                outline: none;
+            }
             QLineEdit[error="true"], QComboBox[error="true"] {
                 border: 2px solid #ff5252;
                 background: #5c2c2c;
@@ -90,27 +96,47 @@ class ExpenseTrackerGUI(QMainWindow):
             QLineEdit, QComboBox, QDateEdit, QDateEdit QAbstractItemView {
                 background:#2d323b; color:#f3f3f3;
                 border:1px solid #444; border-radius:4px; padding:6px; }
-            /* We're using ArrowComboBox which draws its own arrow */
-            QDateEdit::drop-down {
-                /* Define the area for the arrow */
+
+            /* Common styling for all dropdown widgets */
+            QComboBox, QDateEdit {
+                background: #2d323b;
+                color: #f3f3f3;
+                border: 1px solid #444;
+                border-radius: 4px;
+                padding: 6px;
+                padding-right: 28px; /* Extra padding for the arrow */
+                min-height: 20px;
+            }
+
+            /* Style the dropdown button for standard QComboBox */
+            QComboBox::drop-down, QDateEdit::drop-down {
                 subcontrol-origin: padding;
                 subcontrol-position: top right;
-                width: 20px; /* Width of the clickable area */
-                border-left: 1.5px solid #444; /* Visual separator */
+                width: 24px; /* Width of the clickable area */
+                border-left: 1px solid #555; /* Light separator */
                 background: transparent;
             }
-            /* Style the arrow image for QDateEdit */
-            QDateEdit::down-arrow {
+
+            /* Always show a down arrow for QComboBox */
+            QComboBox::down-arrow, QDateEdit::down-arrow {
                 width: 14px;
                 height: 14px;
-                color: white;
-                font-size: 12px;
-                font-weight: bold;
+                background: transparent;
             }
-            QComboBox QAbstractItemView {
+
+            /* Style the dropdown popup */
+            QComboBox QAbstractItemView, ArrowComboBox QAbstractItemView, QDateEdit QAbstractItemView {
                 background-color: #2d323b;
                 border: 1px solid #555;
                 selection-background-color: #4a6984;
+                padding: 4px;
+                border-radius: 3px;
+            }
+
+            /* Focus styling */
+            QComboBox:focus, ArrowComboBox:focus, QDateEdit:focus {
+                border: 1.5px solid #4fc3f7;
+                outline: none;
             }
             QCalendarWidget QToolButton {
                 color: #f3f3f3; background-color: #3a3f4b; border: none; font-weight: bold;
@@ -163,13 +189,8 @@ class ExpenseTrackerGUI(QMainWindow):
         self.subcat_in = ArrowComboBox()
         self.subcat_in.setPlaceholderText('Select Sub Category')
 
-        # We're using ArrowComboBox which draws its own arrow
-        # Ensure dropdowns don't show blank options
-        dropdown_style = """
-            QComboBox::item:first { height: 0px; margin: 0px; padding: 0px; }
-        """
-        for dropdown in [self.type_in, self.account_in, self.cat_in, self.subcat_in]:
-            dropdown.setStyleSheet(dropdown_style)
+        # We're using ArrowComboBox which has its own styling
+        # No need to set additional styles here
         self.desc_in = QLineEdit(placeholderText='Description')
         self.date_in = QDateEdit(QDate.currentDate(), calendarPopup=True)
         self.date_in.setDisplayFormat("dd MMM yyyy")
@@ -250,9 +271,10 @@ class ExpenseTrackerGUI(QMainWindow):
             else:
                 # Use stretch mode for columns without specific width
                 self.tbl.horizontalHeader().setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Stretch)
-        # Set edit triggers - we'll handle single-click for dropdowns in eventFilter
+        # Set edit triggers - include SingleClicked to make dropdowns open with a single click
         self.tbl.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked |
-                               QAbstractItemView.EditTrigger.EditKeyPressed)
+                               QAbstractItemView.EditTrigger.EditKeyPressed |
+                               QAbstractItemView.EditTrigger.SelectedClicked)
         self.tbl.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         self.tbl.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
 
@@ -2490,8 +2512,14 @@ class ExpenseTrackerGUI(QMainWindow):
 
 
 if __name__ == '__main__':
-    app=QApplication(sys.argv)
-    gui=ExpenseTrackerGUI(); gui.show()
+    app = QApplication(sys.argv)
+
+    # Apply the custom style to the entire application
+    custom_style = CustomProxyStyle()
+    app.setStyle(custom_style)
+
+    gui = ExpenseTrackerGUI()
+    gui.show()
     sys.exit(app.exec())
 
 # --- END OF FILE expense_tracker_gui.py ---
