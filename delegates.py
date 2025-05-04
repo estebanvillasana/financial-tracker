@@ -11,6 +11,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from commands import CellEditCommand
 from column_config import get_column_config
+from debug_config import debug_config, debug_print
 
 class SpreadsheetDelegate(QStyledItemDelegate):
     def __init__(self, parent=None):
@@ -179,7 +180,7 @@ class SpreadsheetDelegate(QStyledItemDelegate):
             current_type = 'Expense' # Default assumption
 
             # Debug print to see what data we have for this row
-            print(f"Category dropdown - Transaction data keys: {current_transaction_data.keys() if current_transaction_data else 'None'}")
+            debug_print('DROPDOWN', f"Category dropdown - Transaction data keys: {current_transaction_data.keys() if current_transaction_data else 'None'}")
 
             # Check if this is a bank account mistakenly set as a category
             if current_transaction_data and 'account' in current_transaction_data:
@@ -187,19 +188,19 @@ class SpreadsheetDelegate(QStyledItemDelegate):
                 for acc in self.accounts_list:
                     if acc['name'] == account_name and 'category' in current_transaction_data and current_transaction_data['category'] == account_name:
                         # This is a bank account mistakenly set as a category
-                        print(f"WARNING: Bank account '{account_name}' found in category field. Will be fixed on refresh.")
+                        debug_print('DROPDOWN', f"WARNING: Bank account '{account_name}' found in category field. Will be fixed on refresh.")
                         # The fix will happen in _refresh method
 
             if current_transaction_data and 'transaction_type' in current_transaction_data:
                  current_type = current_transaction_data['transaction_type']
 
-            print(f"Category dropdown - Using transaction type: {current_type}")
+            debug_print('DROPDOWN', f"Category dropdown - Using transaction type: {current_type}")
 
             # Don't add empty item, just populate with categories
             has_uncategorized = False
             for cat in self.categories_list:
                  if cat['type'] == current_type:
-                      print(f"  Adding category: {cat['name']} (ID: {cat['id']}, Type: {cat['type']})")
+                      debug_print('DROPDOWN', f"  Adding category: {cat['name']} (ID: {cat['id']}, Type: {cat['type']})")
                       editor.addItem(cat['name'], userData=cat['id'])
                       if cat['name'] == 'UNCATEGORIZED':
                           has_uncategorized = True
@@ -254,8 +255,8 @@ class SpreadsheetDelegate(QStyledItemDelegate):
                                     break
 
             # Debug print to help diagnose issues
-            print(f"Subcategory dropdown - Current category ID: {current_category_id}")
-            print(f"Transaction data keys: {current_transaction_data.keys() if current_transaction_data else 'None'}")
+            debug_print('DROPDOWN', f"Subcategory dropdown - Current category ID: {current_category_id}")
+            debug_print('DROPDOWN', f"Transaction data keys: {current_transaction_data.keys() if current_transaction_data else 'None'}")
 
             # Check if the category is UNCATEGORIZED
             category_is_uncategorized = False
@@ -271,7 +272,7 @@ class SpreadsheetDelegate(QStyledItemDelegate):
                 for subcat in self.subcategories_list:
                     # Ensure category_id types match for comparison (e.g., both int)
                     if subcat.get('category_id') == current_category_id:
-                        print(f"  Adding subcategory: {subcat['name']} (ID: {subcat['id']}, Category ID: {subcat['category_id']})")
+                        debug_print('DROPDOWN', f"  Adding subcategory: {subcat['name']} (ID: {subcat['id']}, Category ID: {subcat['category_id']})")
                         editor.addItem(subcat['name'], userData=subcat['id'])
                         if subcat['name'] == 'UNCATEGORIZED':
                             has_uncategorized = True
@@ -281,7 +282,7 @@ class SpreadsheetDelegate(QStyledItemDelegate):
 
                 # If no UNCATEGORIZED subcategory exists for this category, create one
                 if not has_uncategorized and self.parent_window and hasattr(self.parent_window, 'db'):
-                    print(f"Creating UNCATEGORIZED subcategory for category ID {current_category_id}")
+                    debug_print('DROPDOWN', f"Creating UNCATEGORIZED subcategory for category ID {current_category_id}")
                     uncategorized_id = self.parent_window.db.ensure_subcategory('UNCATEGORIZED', current_category_id)
                     if uncategorized_id:
                         editor.addItem('UNCATEGORIZED', userData=uncategorized_id)
@@ -541,12 +542,12 @@ class SpreadsheetDelegate(QStyledItemDelegate):
                                         command.target_data_dict['sub_category'] = 'UNCATEGORIZED'
                                         command.target_data_dict['sub_category_id'] = uncategorized_subcat['id']
 
-                                print(f"Transaction type changed to {display_text}, setting category and subcategory to UNCATEGORIZED")
+                                debug_print('DROPDOWN', f"Transaction type changed to {display_text}, setting category and subcategory to UNCATEGORIZED")
 
                     # Special handling for category selection
                     elif col_key == 'category':
                         # Debug print for all category selections
-                        print(f"DEBUG CATEGORY SELECTION: Row {row}, Selected='{display_text}', ID={new_value_for_model}")
+                        debug_print('DROPDOWN', f"CATEGORY SELECTION: Row {row}, Selected='{display_text}', ID={new_value_for_model}")
 
                         # Find the subcategory column index (needed for all category selections)
                         subcategory_col = self.parent_window.COLS.index('sub_category')
@@ -598,7 +599,7 @@ class SpreadsheetDelegate(QStyledItemDelegate):
 
                             # If not found, try to create it
                             if uncat_subcat_id is None and self.parent_window and hasattr(self.parent_window, 'db'):
-                                print(f"Creating UNCATEGORIZED subcategory for category ID {new_value_for_model}")
+                                debug_print('DROPDOWN', f"Creating UNCATEGORIZED subcategory for category ID {new_value_for_model}")
                                 uncat_subcat_id = self.parent_window.db.ensure_subcategory('UNCATEGORIZED', new_value_for_model)
                                 if uncat_subcat_id:
                                     # Add to subcategories list
@@ -630,12 +631,12 @@ class SpreadsheetDelegate(QStyledItemDelegate):
                                         command.target_data_dict['sub_category'] = 'UNCATEGORIZED'
                                         command.target_data_dict['sub_category_id'] = uncat_subcat_id
 
-                                print(f"Category is UNCATEGORIZED, setting subcategory to UNCATEGORIZED (ID: {uncat_subcat_id})")
+                                debug_print('DROPDOWN', f"Category is UNCATEGORIZED, setting subcategory to UNCATEGORIZED (ID: {uncat_subcat_id})")
 
                     # Special handling for subcategory selection
                     elif col_key == 'sub_category':
                         # Debug print for subcategory selection
-                        print(f"DEBUG SUBCATEGORY SELECTION: Row {row}, Selected='{display_text}', ID={new_value_for_model}")
+                        debug_print('DROPDOWN', f"SUBCATEGORY SELECTION: Row {row}, Selected='{display_text}', ID={new_value_for_model}")
 
                         # Get the current transaction data
                         transaction_data = None
@@ -648,7 +649,7 @@ class SpreadsheetDelegate(QStyledItemDelegate):
                         category_id = None
                         if transaction_data:
                             category_id = transaction_data.get('category_id')
-                            print(f"DEBUG SUBCATEGORY: Category ID for this row is {category_id}")
+                            debug_print('DROPDOWN', f"SUBCATEGORY: Category ID for this row is {category_id}")
 
                         # Verify the subcategory belongs to the current category
                         found = False
@@ -656,15 +657,15 @@ class SpreadsheetDelegate(QStyledItemDelegate):
                             if subcat['id'] == new_value_for_model:
                                 if subcat['category_id'] == category_id:
                                     found = True
-                                    print(f"DEBUG SUBCATEGORY: Verified subcategory ID {new_value_for_model} belongs to category {category_id}")
+                                    debug_print('DROPDOWN', f"SUBCATEGORY: Verified subcategory ID {new_value_for_model} belongs to category {category_id}")
                                 else:
-                                    print(f"WARNING: Subcategory ID {new_value_for_model} belongs to category {subcat['category_id']}, not {category_id}")
+                                    debug_print('DROPDOWN', f"WARNING: Subcategory ID {new_value_for_model} belongs to category {subcat['category_id']}, not {category_id}")
                                     # If the subcategory doesn't belong to the current category, find the UNCATEGORIZED subcategory
                                     if category_id is not None:
                                         for uncat_subcat in self.subcategories_list:
                                             if uncat_subcat['category_id'] == category_id and uncat_subcat['name'] == 'UNCATEGORIZED':
                                                 new_value_for_model = uncat_subcat['id']
-                                                print(f"DEBUG SUBCATEGORY: Using UNCATEGORIZED subcategory ID {new_value_for_model} instead")
+                                                debug_print('DROPDOWN', f"SUBCATEGORY: Using UNCATEGORIZED subcategory ID {new_value_for_model} instead")
                                                 found = True
                                                 break
                                 break
@@ -679,7 +680,7 @@ class SpreadsheetDelegate(QStyledItemDelegate):
                                     break
 
                             if uncat_subcat_id is None and self.parent_window and hasattr(self.parent_window, 'db'):
-                                print(f"Creating UNCATEGORIZED subcategory for category ID {category_id}")
+                                debug_print('DROPDOWN', f"Creating UNCATEGORIZED subcategory for category ID {category_id}")
                                 uncat_subcat_id = self.parent_window.db.ensure_subcategory('UNCATEGORIZED', category_id)
                                 if uncat_subcat_id:
                                     # Add to subcategories list
@@ -704,7 +705,7 @@ class SpreadsheetDelegate(QStyledItemDelegate):
 
                             transaction_data['sub_category'] = subcat_name
                             transaction_data['sub_category_id'] = new_value_for_model
-                            print(f"DEBUG SUBCATEGORY: Updated transaction data with subcategory '{subcat_name}' (ID: {new_value_for_model})")
+                            debug_print('DROPDOWN', f"SUBCATEGORY: Updated transaction data with subcategory '{subcat_name}' (ID: {new_value_for_model})")
 
                             # Update the model with both the ID and display text
                             model.setData(index, new_value_for_model, Qt.ItemDataRole.EditRole)
@@ -858,8 +859,8 @@ class SpreadsheetDelegate(QStyledItemDelegate):
                 date_arrow_rect = QRect(rect.right() - date_arrow_width, rect.top(), date_arrow_width, rect.height())
                 self.arrow_rects[(index.row(), index.column())] = date_arrow_rect
 
-                # Print debug info about the stored rect
-                print(f"DEBUG: Stored date arrow rect for row {index.row()}, col {index.column()}: {date_arrow_rect}")
+                # Print debug info about the stored rect if enabled
+                debug_print('DATE_ARROWS', f"Stored date arrow rect for row {index.row()}, col {index.column()}: {date_arrow_rect}")
             else:
                 self.arrow_rects[(index.row(), index.column())] = arrow_rect
 
@@ -1022,7 +1023,7 @@ class SpreadsheetDelegate(QStyledItemDelegate):
                                 if acc['name'] == transaction_data['account']:
                                     account_id = acc['id']
                                     transaction_data['account_id'] = account_id
-                                    print(f"DEBUG CURRENCY: Found account_id {account_id} for account {transaction_data['account']}")
+                                    debug_print('CURRENCY', f"Found account_id {account_id} for account {transaction_data['account']}")
                                     break
 
                         if account_id is not None:
@@ -1030,10 +1031,10 @@ class SpreadsheetDelegate(QStyledItemDelegate):
                             if currency_info and 'currency_symbol' in currency_info:
                                 # Format with just the currency symbol (which already includes the code in our case)
                                 currency_display = f"{currency_info['currency_symbol']} {formatted_value}"
-                                print(f"DEBUG CURRENCY: Formatted with currency: {currency_display}")
+                                debug_print('CURRENCY', f"Formatted with currency: {currency_display}")
                                 return currency_display
                         else:
-                            print(f"DEBUG CURRENCY: Could not determine account_id for currency display")
+                            debug_print('CURRENCY', f"Could not determine account_id for currency display")
 
                 # If we couldn't get currency info or it's not configured, return just the formatted value
                 return formatted_value
@@ -1072,7 +1073,7 @@ class SpreadsheetDelegate(QStyledItemDelegate):
             # Check if it's a subcategory ID
             for subcat in self.subcategories_list:
                 if subcat['id'] == value:
-                    print(f"DEBUG DISPLAY: Found subcategory name '{subcat['name']}' for ID {value}")
+                    debug_print('DROPDOWN', f"DISPLAY: Found subcategory name '{subcat['name']}' for ID {value}")
                     return subcat['name']
 
             # If we get here, it's an ID we couldn't resolve

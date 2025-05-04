@@ -25,6 +25,7 @@ from commands import CellEditCommand
 from column_config import TRANSACTION_COLUMNS, DB_FIELDS, DISPLAY_TITLES, get_column_config
 from custom_widgets import ArrowComboBox, ArrowDateEdit
 from custom_style import CustomProxyStyle
+from debug_config import debug_config, debug_print
 
 class ExpenseTrackerGUI(QMainWindow):
     # Define the columns for the *display* table (match the data we'll fetch)
@@ -66,6 +67,16 @@ class ExpenseTrackerGUI(QMainWindow):
         central = QWidget(self)
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
+
+        # Create menu bar
+        menubar = self.menuBar()
+
+        # Add Help menu
+        help_menu = menubar.addMenu('Help')
+
+        # Add Debug Settings action
+        debug_action = help_menu.addAction('Debug Settings')
+        debug_action.triggered.connect(show_debug_menu)
 
         # --- Stylesheet (Simplified Arrow Styling) ---
         self.setStyleSheet(r'''
@@ -376,15 +387,15 @@ class ExpenseTrackerGUI(QMainWindow):
         """Populate form dropdowns initially after data is loaded."""
         # Populate accounts
         self.account_in.clear()
-        print("--- DEBUG: Populating Accounts Dropdown ---") # ADDED
+        debug_print('DROPDOWN', "--- Populating Accounts Dropdown ---")
         for i, acc in enumerate(self._accounts_data):
-            # ADDED Debug Print
-            print(f"Adding item {i}: Name='{acc['name']}', ID={acc['id']} (Type: {type(acc['id'])})")
+            # Debug Print for dropdown population
+            debug_print('DROPDOWN', f"Adding item {i}: Name='{acc['name']}', ID={acc['id']} (Type: {type(acc['id'])})")
             self.account_in.addItem(acc['name'], userData=acc['id']) # Store ID in userData
-            # ADDED Verification Print
+            # Verification Print
             added_data = self.account_in.itemData(i)
-            print(f"  > Verified itemData({i}): {added_data} (Type: {type(added_data)})")
-        print("--- DEBUG: Accounts Populated ---") # ADDED
+            debug_print('DROPDOWN', f"  > Verified itemData({i}): {added_data} (Type: {type(added_data)})")
+        debug_print('DROPDOWN', "--- Accounts Populated ---")
 
         if not self._accounts_data:
             self.account_in.setPlaceholderText('Select Account')
@@ -401,19 +412,19 @@ class ExpenseTrackerGUI(QMainWindow):
         selected_type = self.type_in.currentText()
         current_category_id = self.cat_in.currentData() # Get previously stored ID if any
 
-        print(f"--- DEBUG: Filtering Categories for Type: {selected_type} ---") # ADDED
+        debug_print('DROPDOWN', f"--- Filtering Categories for Type: {selected_type} ---")
         self.cat_in.blockSignals(True)
         self.cat_in.clear()
         found_current = False
         default_index = -1
         for i, cat in enumerate(self._categories_data):
             if cat['type'] == selected_type:
-                # ADDED Debug Print
-                print(f"  Adding Cat item {self.cat_in.count()}: Name='{cat['name']}', ID={cat['id']} (Type: {type(cat['id'])})")
+                # Debug Print for category dropdown
+                debug_print('DROPDOWN', f"  Adding Cat item {self.cat_in.count()}: Name='{cat['name']}', ID={cat['id']} (Type: {type(cat['id'])})")
                 self.cat_in.addItem(cat['name'], userData=cat['id'])
-                # ADDED Verification Print
+                # Verification Print
                 added_data = self.cat_in.itemData(self.cat_in.count() - 1)
-                print(f"    > Verified itemData({self.cat_in.count() - 1}): {added_data} (Type: {type(added_data)})")
+                debug_print('DROPDOWN', f"    > Verified itemData({self.cat_in.count() - 1}): {added_data} (Type: {type(added_data)})")
 
                 if cat['id'] == current_category_id:
                     found_current = True
@@ -433,7 +444,7 @@ class ExpenseTrackerGUI(QMainWindow):
             self.cat_in.setCurrentIndex(0)
         else:
             self.cat_in.setPlaceholderText(f"No {selected_type} Categories")
-        print(f"--- DEBUG: Categories Filtered. Selected index: {restored_idx} ---") # ADDED
+        debug_print('DROPDOWN', f"--- Categories Filtered. Selected index: {restored_idx} ---")
 
         self.cat_in.blockSignals(False)
         # Must trigger subcategory filter AFTER potentially changing category index
@@ -444,7 +455,7 @@ class ExpenseTrackerGUI(QMainWindow):
         selected_category_id = self.cat_in.currentData() # Get ID from category dropdown
         current_subcategory_id = self.subcat_in.currentData() # Get previously stored ID if any
 
-        print(f"--- DEBUG: Filtering SubCats for Category ID: {selected_category_id} ---") # ADDED
+        debug_print('DROPDOWN', f"--- Filtering SubCats for Category ID: {selected_category_id} ---")
         self.subcat_in.blockSignals(True)
         self.subcat_in.clear()
         found_current = False
@@ -453,12 +464,12 @@ class ExpenseTrackerGUI(QMainWindow):
         if selected_category_id is not None:
             for i, subcat in enumerate(self._subcategories_data):
                 if subcat['category_id'] == selected_category_id:
-                     # ADDED Debug Print
-                    print(f"  Adding SubCat item {self.subcat_in.count()}: Name='{subcat['name']}', ID={subcat['id']} (Type: {type(subcat['id'])})")
+                    # Debug Print for subcategory dropdown
+                    debug_print('DROPDOWN', f"  Adding SubCat item {self.subcat_in.count()}: Name='{subcat['name']}', ID={subcat['id']} (Type: {type(subcat['id'])})")
                     self.subcat_in.addItem(subcat['name'], userData=subcat['id'])
-                    # ADDED Verification Print
+                    # Verification Print
                     added_data = self.subcat_in.itemData(self.subcat_in.count() - 1)
-                    print(f"    > Verified itemData({self.subcat_in.count() - 1}): {added_data} (Type: {type(added_data)})")
+                    debug_print('DROPDOWN', f"    > Verified itemData({self.subcat_in.count() - 1}): {added_data} (Type: {type(added_data)})")
 
                     if subcat['id'] == current_subcategory_id:
                         found_current = True
@@ -478,7 +489,7 @@ class ExpenseTrackerGUI(QMainWindow):
             self.subcat_in.setCurrentIndex(0)
         else:
             self.subcat_in.setPlaceholderText("No Subcategories")
-        print(f"--- DEBUG: Subcategories Filtered. Selected index: {restored_idx} ---") # ADDED
+        debug_print('DROPDOWN', f"--- Subcategories Filtered. Selected index: {restored_idx} ---")
 
         self.subcat_in.blockSignals(False)
 
@@ -544,7 +555,7 @@ class ExpenseTrackerGUI(QMainWindow):
                 if 'account_id' in data and data['account_id'] is not None:
                     try:
                         data['account_id'] = int(data['account_id'])
-                        print(f"DEBUG LOAD: Converted account_id to int: {data['account_id']} for account {data['account']}")
+                        debug_print('ACCOUNT_CONVERSION', f"Converted account_id to int: {data['account_id']} for account {data['account']}")
                     except (ValueError, TypeError):
                         # If account_id is not a valid integer, try to find it from account name
                         data['account_id'] = None
@@ -1110,10 +1121,57 @@ class ExpenseTrackerGUI(QMainWindow):
         # print(f"    > SubCategory Result: ID={valid_subcategory_id}, Error: {errors.get('sub_category')}")
 
         # --- Date Validation ---
-        # ... (existing date validation) ...
+        date_str = str(cleaned_data.get('transaction_date', '')).strip()
+        if not date_str:
+            errors['transaction_date'] = 'Date is required.'
+        else:
+            # Check if the date is in the correct ISO format (YYYY-MM-DD)
+            try:
+                # First, try to parse as ISO format
+                if len(date_str) == 10 and date_str.count('-') == 2:
+                    year, month, day = date_str.split('-')
+                    if len(year) == 4 and len(month) == 2 and len(day) == 2:
+                        # Validate as a proper date
+                        datetime.strptime(date_str, '%Y-%m-%d')
+                        # If we get here, the date is valid ISO format
+                        cleaned_data['transaction_date'] = date_str
+                    else:
+                        raise ValueError("Date parts have incorrect lengths")
+                else:
+                    # Try to parse other common formats
+                    date_formats = [
+                        ('%d %b %Y', r'\d{1,2} [A-Za-z]{3} \d{4}'),  # "20 May 2025"
+                        ('%m/%d/%Y', r'\d{1,2}/\d{1,2}/\d{4}'),      # "05/20/2025"
+                        ('%d/%m/%Y', r'\d{1,2}/\d{1,2}/\d{4}')       # "20/05/2025"
+                    ]
+
+                    parsed_date = None
+                    for fmt, pattern in date_formats:
+                        if re.match(pattern, date_str):
+                            try:
+                                parsed_date = datetime.strptime(date_str, fmt)
+                                break
+                            except ValueError:
+                                continue
+
+                    if parsed_date:
+                        # Convert to ISO format
+                        cleaned_data['transaction_date'] = parsed_date.strftime('%Y-%m-%d')
+                    else:
+                        # If all formats fail, use current date
+                        errors['transaction_date'] = f'Invalid date format: {date_str}. Using current date.'
+                        cleaned_data['transaction_date'] = datetime.now().strftime('%Y-%m-%d')
+            except ValueError as e:
+                # If date parsing fails, use current date
+                errors['transaction_date'] = f'Invalid date: {e}. Using current date.'
+                cleaned_data['transaction_date'] = datetime.now().strftime('%Y-%m-%d')
 
         # --- Name and Description Cleaning ---
-        # ... (existing name/desc cleaning) ...
+        # Clean transaction name and description (just strip whitespace)
+        name = str(cleaned_data.get('transaction_name', '')).strip()
+        description = str(cleaned_data.get('transaction_description', '')).strip()
+        cleaned_data['transaction_name'] = name
+        cleaned_data['transaction_description'] = description
 
         # --- Set transaction_sub_category if valid_subcategory_id is set ---
         if valid_subcategory_id is not None:
@@ -1171,10 +1229,10 @@ class ExpenseTrackerGUI(QMainWindow):
                     if ('transaction_type' not in valid_data or
                         'account_id' not in valid_data or
                         'transaction_sub_category' not in valid_data):
-                        print(f"Missing required fields for row {row_idx_visual}:")
-                        print(f"  transaction_type: {valid_data.get('transaction_type')}")
-                        print(f"  account_id: {valid_data.get('account_id')}")
-                        print(f"  transaction_sub_category: {valid_data.get('transaction_sub_category')}")
+                        debug_print('FOREIGN_KEYS', f"Missing required fields for row {row_idx_visual}:")
+                        debug_print('FOREIGN_KEYS', f"  transaction_type: {valid_data.get('transaction_type')}")
+                        debug_print('FOREIGN_KEYS', f"  account_id: {valid_data.get('account_id')}")
+                        debug_print('FOREIGN_KEYS', f"  transaction_sub_category: {valid_data.get('transaction_sub_category')}")
                         self.errors[row_idx_visual] = self.errors.get(row_idx_visual, {})
                         if 'transaction_type' not in valid_data:
                             self.errors[row_idx_visual]['transaction_type'] = "Transaction type is missing"
@@ -1577,7 +1635,7 @@ class ExpenseTrackerGUI(QMainWindow):
                 fab_y = max(10, min(fab_y, self.height() - self.fab.height() - 10)) # Add padding
                 self.fab.move(fab_x, fab_y)
             except Exception as e:
-                print(f"Error placing FAB: {e}") # Catch potential errors during mapping
+                debug_print('CLICK_DETECTION', f"Error placing FAB: {e}") # Catch potential errors during mapping
 
 
     def _copy_selection(self):
@@ -1722,15 +1780,15 @@ class ExpenseTrackerGUI(QMainWindow):
                                 # Strip any remaining whitespace
                                 cleaned_value = cleaned_value.strip()
 
-                                print(f"DEBUG PASTE: Transaction value '{new_value}' cleaned to '{cleaned_value}'")
+                                debug_print('FOREIGN_KEYS', f"PASTE: Transaction value '{new_value}' cleaned to '{cleaned_value}'")
 
                                 # Try to convert to float
                                 amount_val, ok = self.locale.toFloat(cleaned_value)
                                 if ok:
                                     new_value = amount_val
-                                    print(f"DEBUG PASTE: Converted transaction value '{cleaned_value}' to {amount_val}")
+                                    debug_print('FOREIGN_KEYS', f"PASTE: Converted transaction value '{cleaned_value}' to {amount_val}")
                                 else:
-                                    print(f"DEBUG PASTE: Failed to convert transaction value '{cleaned_value}' to float")
+                                    debug_print('FOREIGN_KEYS', f"PASTE: Failed to convert transaction value '{cleaned_value}' to float")
                                     new_value = old_value # Revert if invalid amount format
                             # Handle account column - convert account name to account_id
                             elif col_key == 'account':
@@ -1744,11 +1802,11 @@ class ExpenseTrackerGUI(QMainWindow):
                                 if account_id is not None:
                                     # Use the account ID instead of the name
                                     new_value = account_id
-                                    print(f"DEBUG PASTE: Converted account name '{value_str}' to ID {account_id}")
+                                    debug_print('FOREIGN_KEYS', f"PASTE: Converted account name '{value_str}' to ID {account_id}")
                                 else:
                                     # If account name not found, keep original value
                                     new_value = old_value
-                                    print(f"DEBUG PASTE: Account name '{value_str}' not found, keeping original value")
+                                    debug_print('FOREIGN_KEYS', f"PASTE: Account name '{value_str}' not found, keeping original value")
                             # Handle category column - convert category name to category_id
                             elif col_key == 'category':
                                 # Get the transaction type for context
@@ -1774,11 +1832,11 @@ class ExpenseTrackerGUI(QMainWindow):
                                 if category_id is not None:
                                     # Use the category ID instead of the name
                                     new_value = category_id
-                                    print(f"DEBUG PASTE: Converted category name '{value_str}' to ID {category_id}")
+                                    debug_print('FOREIGN_KEYS', f"PASTE: Converted category name '{value_str}' to ID {category_id}")
                                 else:
                                     # If category name not found, keep original value
                                     new_value = old_value
-                                    print(f"DEBUG PASTE: Category name '{value_str}' not found for type {transaction_type}, keeping original value")
+                                    debug_print('FOREIGN_KEYS', f"PASTE: Category name '{value_str}' not found for type {transaction_type}, keeping original value")
                             # Handle subcategory column - convert subcategory name to subcategory_id
                             elif col_key == 'sub_category':
                                 # Get the category ID for context
@@ -1802,19 +1860,19 @@ class ExpenseTrackerGUI(QMainWindow):
                                     if subcategory_id is not None:
                                         # Use the subcategory ID instead of the name
                                         new_value = subcategory_id
-                                        print(f"DEBUG PASTE: Converted subcategory name '{value_str}' to ID {subcategory_id}")
+                                        debug_print('FOREIGN_KEYS', f"PASTE: Converted subcategory name '{value_str}' to ID {subcategory_id}")
                                     else:
                                         # If subcategory name not found, keep original value
                                         new_value = old_value
-                                        print(f"DEBUG PASTE: Subcategory name '{value_str}' not found for category ID {category_id}, keeping original value")
+                                        debug_print('FOREIGN_KEYS', f"PASTE: Subcategory name '{value_str}' not found for category ID {category_id}, keeping original value")
                                 else:
                                     # If no category ID context, keep original value
                                     new_value = old_value
-                                    print(f"DEBUG PASTE: No category ID context for subcategory '{value_str}', keeping original value")
+                                    debug_print('FOREIGN_KEYS', f"PASTE: No category ID context for subcategory '{value_str}', keeping original value")
                             # No specific conversion needed for other columns,
                             # rely on validation during save. Keep as string.
                         except Exception as e:
-                            print(f"DEBUG PASTE: Error converting value: {e}")
+                            debug_print('FOREIGN_KEYS', f"PASTE: Error converting value: {e}")
                             new_value = old_value # Revert on any conversion error
 
                         new_value_str = str(new_value)
@@ -1840,7 +1898,7 @@ class ExpenseTrackerGUI(QMainWindow):
             if account_col_index >= 0:
                 for row, col in affected_rows_cols:
                     if col == account_col_index:
-                        print(f"DEBUG PASTE: Updating currency display for row {row} after account change")
+                        debug_print('CURRENCY', f"PASTE: Updating currency display for row {row} after account change")
                         self._update_currency_display_for_row(row)
 
             # Explicitly refresh the UI to ensure pasted data is visible
@@ -2049,7 +2107,7 @@ class ExpenseTrackerGUI(QMainWindow):
 
                                 # If not found, create it
                                 if not uncategorized_id and self.db:
-                                    print(f"Creating UNCATEGORIZED subcategory for category ID {category_id}")
+                                    debug_print('DROPDOWN', f"Creating UNCATEGORIZED subcategory for category ID {category_id}")
                                     uncategorized_id = self.db.ensure_subcategory('UNCATEGORIZED', category_id)
                                     if uncategorized_id:
                                         value = 'UNCATEGORIZED'
@@ -2113,7 +2171,7 @@ class ExpenseTrackerGUI(QMainWindow):
                 # Special handling for subcategory display
                 if key == 'sub_category':
                     # Debug print to see what's happening with subcategory values
-                    print(f"DEBUG SUBCATEGORY: Row {r}, ID={row_data.get('sub_category_id')}, Value='{value}', Display='{display_text}'")
+                    debug_print('SUBCATEGORY', f"Row {r}, ID={row_data.get('sub_category_id')}, Value='{value}', Display='{display_text}'")
 
                     # Ensure we display the correct subcategory name based on the ID
                     if row_data.get('sub_category_id'):
@@ -2127,11 +2185,11 @@ class ExpenseTrackerGUI(QMainWindow):
 
                                     break
                                 else:
-                                    print(f"WARNING: Subcategory ID {subcat['id']} belongs to category {subcat['category_id']}, not {row_data.get('category_id')}")
+                                    debug_print('SUBCATEGORY', f"WARNING: Subcategory ID {subcat['id']} belongs to category {subcat['category_id']}, not {row_data.get('category_id')}")
 
                         if not found:
                             # If we couldn't find the subcategory or it doesn't belong to the current category, force it to UNCATEGORIZED
-                            print(f"WARNING: Valid subcategory ID {row_data.get('sub_category_id')} not found for category ID {row_data.get('category_id')}")
+                            debug_print('SUBCATEGORY', f"WARNING: Valid subcategory ID {row_data.get('sub_category_id')} not found for category ID {row_data.get('category_id')}")
                             # Find the correct UNCATEGORIZED subcategory for this category
                             category_id = row_data.get('category_id')
                             if category_id:
@@ -2142,18 +2200,18 @@ class ExpenseTrackerGUI(QMainWindow):
                                         row_data['sub_category'] = 'UNCATEGORIZED'
                                         row_data['sub_category_id'] = subcat['id']
                                         uncategorized_found = True
-                                        print(f"Fixed: Set subcategory to UNCATEGORIZED (ID: {subcat['id']})")
+                                        debug_print('SUBCATEGORY', f"Fixed: Set subcategory to UNCATEGORIZED (ID: {subcat['id']})")
                                         break
 
                                 # If we couldn't find an UNCATEGORIZED subcategory, create one
                                 if not uncategorized_found and self.db:
-                                    print(f"Creating UNCATEGORIZED subcategory for category ID {category_id}")
+                                    debug_print('SUBCATEGORY', f"Creating UNCATEGORIZED subcategory for category ID {category_id}")
                                     uncategorized_id = self.db.ensure_subcategory('UNCATEGORIZED', category_id)
                                     if uncategorized_id:
                                         display_text = 'UNCATEGORIZED'
                                         row_data['sub_category'] = 'UNCATEGORIZED'
                                         row_data['sub_category_id'] = uncategorized_id
-                                        print(f"Created and set subcategory to UNCATEGORIZED (ID: {uncategorized_id})")
+                                        debug_print('SUBCATEGORY', f"Created and set subcategory to UNCATEGORIZED (ID: {uncategorized_id})")
                                         # Add to our local data
                                         self._subcategories_data.append({
                                             'id': uncategorized_id,
@@ -2220,168 +2278,172 @@ class ExpenseTrackerGUI(QMainWindow):
 
     def _debug_print_table(self):
         """Debug function to print the table contents to the terminal."""
-        print("\n===== TABLE CONTENTS =====")
-        print(f"{'Row':<4} | {'Status':<12} | {'Transaction Name':<20} | {'Value':<15} | {'Account':<20} | {'Type':<10} | {'Category':<20} | {'Sub Category':<20}")
-        print("-" * 140)
+        # Only print table contents if TABLE_DISPLAY debug category is enabled
+        if debug_config.is_enabled('TABLE_DISPLAY'):
+            print("\n===== TABLE CONTENTS =====")
+            print(f"{'Row':<4} | {'Status':<12} | {'Transaction Name':<20} | {'Value':<15} | {'Account':<20} | {'Type':<10} | {'Category':<20} | {'Sub Category':<20}")
+            print("-" * 140)
 
-        num_transactions = len(self.transactions)
+            num_transactions = len(self.transactions)
 
-        for row in range(self.tbl.rowCount() - 1):  # Skip the '+' row
-            row_data = []
-            for col in range(self.tbl.columnCount()):
-                item = self.tbl.item(row, col)
-                text = item.text() if item else ""
-                row_data.append(text)
+            for row in range(self.tbl.rowCount() - 1):  # Skip the '+' row
+                row_data = []
+                for col in range(self.tbl.columnCount()):
+                    item = self.tbl.item(row, col)
+                    text = item.text() if item else ""
+                    row_data.append(text)
 
-            # Determine row status with color indicators
-            status = ""
-            status_color = ""
-            if row < num_transactions:
-                # This is a saved transaction
-                transaction = self.transactions[row]
-                rowid = transaction.get('rowid')
+                # Determine row status with color indicators
+                status = ""
+                status_color = ""
+                if row < num_transactions:
+                    # This is a saved transaction
+                    transaction = self.transactions[row]
+                    rowid = transaction.get('rowid')
 
-                # Check if this row is in the dirty set
-                is_dirty = False
-                if rowid in self.dirty:
-                    is_dirty = True
-                # Also check if any field in the row is different from the original
-                elif rowid in self._original_data_cache:
-                    original = self._original_data_cache.get(rowid, {})
-                    for key, value in transaction.items():
-                        if key.startswith('_') or key == 'rowid':
-                            continue
-                        if key in original and original[key] != value:
-                            is_dirty = True
-                            break
+                    # Check if this row is in the dirty set
+                    is_dirty = False
+                    if rowid in self.dirty:
+                        is_dirty = True
+                    # Also check if any field in the row is different from the original
+                    elif rowid in self._original_data_cache:
+                        original = self._original_data_cache.get(rowid, {})
+                        for key, value in transaction.items():
+                            if key.startswith('_') or key == 'rowid':
+                                continue
+                            if key in original and original[key] != value:
+                                is_dirty = True
+                                break
 
-                if is_dirty:
-                    status = "[MODIFIED]"
-                    status_color = "\033[33m"  # Yellow for modified
+                    if is_dirty:
+                        status = "[MODIFIED]"
+                        status_color = "\033[33m"  # Yellow for modified
+                    else:
+                        status = "[SAVED]"
+                        status_color = "\033[32m"  # Green for saved
                 else:
-                    status = "[SAVED]"
-                    status_color = "\033[32m"  # Green for saved
-            else:
-                # This is a pending (new) transaction
-                status = "[NEW]"
-                status_color = "\033[36m"  # Cyan for new
+                    # This is a pending (new) transaction
+                    status = "[NEW]"
+                    status_color = "\033[36m"  # Cyan for new
 
-                # Check if it has validation errors
-                pending_idx = row - num_transactions
-                if pending_idx < len(self.pending):
-                    if self.pending[pending_idx].get('_has_error'):
+                    # Check if it has validation errors
+                    pending_idx = row - num_transactions
+                    if pending_idx < len(self.pending):
+                        if self.pending[pending_idx].get('_has_error'):
+                            status = "[NEW/ERROR]"
+                            status_color = "\033[31m"  # Red for errors
+
+                # Add reset color code
+                status_with_color = f"{status_color}{status}\033[0m"
+
+                # Highlight modified fields in the table display
+                modified_fields = []
+                if row < num_transactions and self.transactions[row].get('rowid') in self.dirty:
+                    rowid = self.transactions[row].get('rowid')
+                    original = self._original_data_cache.get(rowid, {})
+
+                    # Check which fields are modified
+                    if original.get('transaction_name') != self.transactions[row].get('transaction_name'):
+                        modified_fields.append(0)  # Transaction Name column
+                    if original.get('transaction_value') != self.transactions[row].get('transaction_value'):
+                        modified_fields.append(1)  # Value column
+                    if original.get('account') != self.transactions[row].get('account'):
+                        modified_fields.append(2)  # Account column
+                    if original.get('transaction_type') != self.transactions[row].get('transaction_type'):
+                        modified_fields.append(3)  # Type column
+                    if original.get('category') != self.transactions[row].get('category'):
+                        modified_fields.append(4)  # Category column
+                    if original.get('sub_category') != self.transactions[row].get('sub_category'):
+                        modified_fields.append(5)  # Sub Category column
+
+                # Format the row data with status and highlight modified fields
+                field_values = []
+                for i, value in enumerate(row_data[:6]):  # Only process the first 6 columns
+                    if i in modified_fields:
+                        # Highlight modified fields with asterisks
+                        field_values.append(f"*{value[:18]}*" if i == 0 else f"*{value}*")
+                    else:
+                        field_values.append(value[:20] if i == 0 else value)
+
+                print(f"{row:<4} | {status_with_color:<12} | {field_values[0]:<20} | {field_values[1]:<15} | {field_values[2]:<20} | {field_values[3]:<10} | {field_values[4]:<20} | {field_values[5]:<20}")
+
+            print("========================\n")
+
+        # Only print underlying data if UNDERLYING_DATA debug category is enabled
+        if debug_config.is_enabled('UNDERLYING_DATA'):
+            print("===== UNDERLYING DATA =====")
+            num_transactions = len(self.transactions)
+            all_data = self.transactions + self.pending
+            for i, data in enumerate(all_data):
+                # Determine row status for data display with color indicators
+                status = ""
+                status_color = ""
+                if i < num_transactions:
+                    rowid = data.get('rowid')
+
+                    # Check if this row is in the dirty set
+                    is_dirty = False
+                    if rowid in self.dirty:
+                        is_dirty = True
+                    # Also check if any field in the row is different from the original
+                    elif rowid in self._original_data_cache:
+                        original = self._original_data_cache.get(rowid, {})
+                        for key, value in data.items():
+                            if key.startswith('_') or key == 'rowid':
+                                continue
+                            if key in original and original[key] != value:
+                                is_dirty = True
+                                break
+
+                    if is_dirty:
+                        status = "[MODIFIED]"
+                        status_color = "\033[33m"  # Yellow for modified
+                    else:
+                        status = "[SAVED]"
+                        status_color = "\033[32m"  # Green for saved
+                else:
+                    # This is a pending (new) transaction
+                    status = "[NEW]"
+                    status_color = "\033[36m"  # Cyan for new
+                    if data.get('_has_error'):
                         status = "[NEW/ERROR]"
                         status_color = "\033[31m"  # Red for errors
 
-            # Add reset color code
-            status_with_color = f"{status_color}{status}\033[0m"
+                # Add reset color code
+                status_with_color = f"{status_color}{status}\033[0m"
 
-            # Highlight modified fields in the table display
-            modified_fields = []
-            if row < num_transactions and self.transactions[row].get('rowid') in self.dirty:
-                rowid = self.transactions[row].get('rowid')
-                original = self._original_data_cache.get(rowid, {})
+                account_id = data.get('account_id')
+                account_name = data.get('account')
+                currency_info = None
+                if account_id is not None:
+                    try:
+                        currency_info = self.db.get_account_currency(account_id)
+                    except Exception as e:
+                        print(f"Error getting currency for account {account_id}: {e}")
 
-                # Check which fields are modified
-                if original.get('transaction_name') != self.transactions[row].get('transaction_name'):
-                    modified_fields.append(0)  # Transaction Name column
-                if original.get('transaction_value') != self.transactions[row].get('transaction_value'):
-                    modified_fields.append(1)  # Value column
-                if original.get('account') != self.transactions[row].get('account'):
-                    modified_fields.append(2)  # Account column
-                if original.get('transaction_type') != self.transactions[row].get('transaction_type'):
-                    modified_fields.append(3)  # Type column
-                if original.get('category') != self.transactions[row].get('category'):
-                    modified_fields.append(4)  # Category column
-                if original.get('sub_category') != self.transactions[row].get('sub_category'):
-                    modified_fields.append(5)  # Sub Category column
+                # Include transaction value and status in the output
+                value = data.get('transaction_value', 'N/A')
+                print(f"Row {i} {status_with_color}: Account={account_name}, Account ID={account_id}, Value={value}, Currency={currency_info}")
 
-            # Format the row data with status and highlight modified fields
-            field_values = []
-            for i, value in enumerate(row_data[:6]):  # Only process the first 6 columns
-                if i in modified_fields:
-                    # Highlight modified fields with asterisks
-                    field_values.append(f"*{value[:18]}*" if i == 0 else f"*{value}*")
-                else:
-                    field_values.append(value[:20] if i == 0 else value)
-
-            print(f"{row:<4} | {status_with_color:<12} | {field_values[0]:<20} | {field_values[1]:<15} | {field_values[2]:<20} | {field_values[3]:<10} | {field_values[4]:<20} | {field_values[5]:<20}")
-
-        print("========================\n")
-
-        # Print the underlying data for each row
-        print("===== UNDERLYING DATA =====")
-        all_data = self.transactions + self.pending
-        for i, data in enumerate(all_data):
-            # Determine row status for data display with color indicators
-            status = ""
-            status_color = ""
-            if i < num_transactions:
-                rowid = data.get('rowid')
-
-                # Check if this row is in the dirty set
-                is_dirty = False
-                if rowid in self.dirty:
-                    is_dirty = True
-                # Also check if any field in the row is different from the original
-                elif rowid in self._original_data_cache:
+                # If the row is dirty or has errors, show what fields are modified or have errors
+                if is_dirty if i < num_transactions else False:
+                    rowid = data.get('rowid')
                     original = self._original_data_cache.get(rowid, {})
+                    changes = []
                     for key, value in data.items():
                         if key.startswith('_') or key == 'rowid':
                             continue
                         if key in original and original[key] != value:
-                            is_dirty = True
-                            break
+                            changes.append(f"{key}: '{original[key]}' -> '{value}'")
+                    if changes:
+                        print(f"  Changes: {', '.join(changes)}")
 
-                if is_dirty:
-                    status = "[MODIFIED]"
-                    status_color = "\033[33m"  # Yellow for modified
-                else:
-                    status = "[SAVED]"
-                    status_color = "\033[32m"  # Green for saved
-            else:
-                # This is a pending (new) transaction
-                status = "[NEW]"
-                status_color = "\033[36m"  # Cyan for new
                 if data.get('_has_error'):
-                    status = "[NEW/ERROR]"
-                    status_color = "\033[31m"  # Red for errors
+                    errors = data.get('_errors', {})
+                    if errors:
+                        print(f"  Errors: {errors}")
 
-            # Add reset color code
-            status_with_color = f"{status_color}{status}\033[0m"
-
-            account_id = data.get('account_id')
-            account_name = data.get('account')
-            currency_info = None
-            if account_id is not None:
-                try:
-                    currency_info = self.db.get_account_currency(account_id)
-                except Exception as e:
-                    print(f"Error getting currency for account {account_id}: {e}")
-
-            # Include transaction value and status in the output
-            value = data.get('transaction_value', 'N/A')
-            print(f"Row {i} {status_with_color}: Account={account_name}, Account ID={account_id}, Value={value}, Currency={currency_info}")
-
-            # If the row is dirty or has errors, show what fields are modified or have errors
-            if is_dirty if i < num_transactions else False:
-                rowid = data.get('rowid')
-                original = self._original_data_cache.get(rowid, {})
-                changes = []
-                for key, value in data.items():
-                    if key.startswith('_') or key == 'rowid':
-                        continue
-                    if key in original and original[key] != value:
-                        changes.append(f"{key}: '{original[key]}' -> '{value}'")
-                if changes:
-                    print(f"  Changes: {', '.join(changes)}")
-
-            if data.get('_has_error'):
-                errors = data.get('_errors', {})
-                if errors:
-                    print(f"  Errors: {errors}")
-
-        print("========================\n")
+            print("========================\n")
 
     def _update_button_states(self):
         has_changes = bool(self.pending) or bool(self.dirty)
@@ -2589,12 +2651,12 @@ class ExpenseTrackerGUI(QMainWindow):
                                 # Make the date icon more clickable
                                 if relative_x >= 0 and relative_x <= arrow_rect.width() and pos.y() >= cell_rect.top() and pos.y() <= cell_rect.bottom():
                                     click_on_icon = True
-                                    print(f"DEBUG: Click on DATE icon detected for row {row}, col {col}, relative_x={relative_x}, arrow_width={arrow_rect.width()}")
+                                    debug_print('CLICK_DETECTION', f"Click on DATE icon detected for row {row}, col {col}, relative_x={relative_x}, arrow_width={arrow_rect.width()}")
                             else:
                                 # Standard check for other dropdown fields
                                 if relative_x >= 0 and relative_x <= arrow_rect.width() and pos.y() >= cell_rect.top() and pos.y() <= cell_rect.bottom():
                                     click_on_icon = True
-                                    print(f"DEBUG: Click on icon detected for row {row}, col {col}, key {col_key}")
+                                    debug_print('CLICK_DETECTION', f"Click on icon detected for row {row}, col {col}, key {col_key}")
 
                         # If clicked directly on the arrow/icon, force immediate dropdown/calendar opening
                         if click_on_icon and row < empty_row_index:
@@ -2669,10 +2731,15 @@ class ExpenseTrackerGUI(QMainWindow):
 
         # Close DB connection if window is closing
         if event.isAccepted():
-             print("Closing database connection...")
+             debug_print('FOREIGN_KEYS', "Closing database connection...")
              self.db.close()
-             print("Database connection closed.")
+             debug_print('FOREIGN_KEYS', "Database connection closed.")
 
+
+def show_debug_menu():
+    """Show the debug configuration menu."""
+    from debug_control import show_debug_menu
+    show_debug_menu()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
@@ -2680,6 +2747,10 @@ if __name__ == '__main__':
     # Apply the custom style to the entire application
     custom_style = CustomProxyStyle()
     app.setStyle(custom_style)
+
+    # Add debug menu option
+    if len(sys.argv) > 1 and sys.argv[1] == '--debug':
+        show_debug_menu()
 
     gui = ExpenseTrackerGUI()
     gui.show()

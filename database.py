@@ -5,6 +5,18 @@ from datetime import datetime
 from typing import List, Dict, Optional
 from decimal import Decimal # Import Decimal for potential type hints or internal use
 
+# Import debug configuration
+try:
+    from debug_config import debug_config, debug_print
+except ImportError:
+    # Fallback if debug_config.py doesn't exist yet
+    class DummyDebugConfig:
+        def is_enabled(self, category):
+            return False
+    debug_config = DummyDebugConfig()
+    def debug_print(category, message):
+        pass
+
 # Define a consistent date format string
 DB_DATE_FORMAT = "%Y-%m-%d" # Using only date part based on GUI usage
 
@@ -21,18 +33,18 @@ class Database:
             # self.conn.isolation_level = None # Autocommit mode (less common for apps)
             # Default: deferred transactions (BEGIN issued automatically)
             self.conn.row_factory = sqlite3.Row # Access columns by name
-            print(f"Database connection opened: {db_name}")
+            debug_print('FOREIGN_KEYS', f"Database connection opened: {db_name}")
             self.create_tables()
             self.insert_default_data()
         except sqlite3.Error as e:
-            print(f"FATAL DATABASE ERROR during initialization: {e}")
+            debug_print('FOREIGN_KEYS', f"FATAL DATABASE ERROR during initialization: {e}")
             # Optionally re-raise or handle more gracefully depending on application needs
             # raise # Re-raise the exception to signal failure
 
     def create_tables(self):
         """Create necessary tables if they don't exist."""
         if not self.conn:
-            print("Error: No database connection available for creating tables.")
+            debug_print('FOREIGN_KEYS', "Error: No database connection available for creating tables.")
             return
 
         cursor = self.conn.cursor()
@@ -94,9 +106,9 @@ class Database:
                     transaction_date TEXT NOT NULL,    -- Store as ISO format string 'YYYY-MM-DD'
                     FOREIGN KEY (account_id) REFERENCES bank_accounts (id) ON DELETE RESTRICT,
                     FOREIGN KEY (transaction_category) REFERENCES categories (id) ON DELETE RESTRICT, -- Reverted name
-                    FOREIGN KEY (transaction_sub_category) REFERENCES sub_categories (id) ON DELETE RESTRICT -- Reverted name
-                    -- Add check constraint for date format if needed (though application layer validation is often better)
-                    -- CHECK(transaction_date GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]')
+                    FOREIGN KEY (transaction_sub_category) REFERENCES sub_categories (id) ON DELETE RESTRICT, -- Reverted name
+                    -- Add check constraint for date format to enforce ISO format 'YYYY-MM-DD'
+                    CHECK(transaction_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')
                 )
             """)
             # Create indexes for faster lookups on foreign keys and dates
@@ -123,14 +135,14 @@ class Database:
             self.conn.commit()
             # print("Database tables created/ensured.") # Less verbose output
         except sqlite3.Error as e:
-            print(f"Error creating/ensuring tables: {e}")
+            debug_print('FOREIGN_KEYS', f"Error creating/ensuring tables: {e}")
             if self.conn:
                  self.conn.rollback() # Rollback any partial changes if error occurs
 
     def insert_default_data(self):
         """Insert essential default data like default currency and categories."""
         if not self.conn:
-            print("Error: No database connection available for inserting default data.")
+            debug_print('FOREIGN_KEYS', "Error: No database connection available for inserting default data.")
             return
 
         cursor = self.conn.cursor()
@@ -148,12 +160,12 @@ class Database:
             if uncategorized_expense_id:
                 self.ensure_subcategory('UNCATEGORIZED', uncategorized_expense_id)
             else:
-                 print("Warning: Could not find/create 'UNCATEGORIZED' Expense category for default subcategory.")
+                 debug_print('SUBCATEGORY', "Warning: Could not find/create 'UNCATEGORIZED' Expense category for default subcategory.")
 
             if uncategorized_income_id:
                 self.ensure_subcategory('UNCATEGORIZED', uncategorized_income_id)
             else:
-                 print("Warning: Could not find/create 'UNCATEGORIZED' Income category for default subcategory.")
+                 debug_print('SUBCATEGORY', "Warning: Could not find/create 'UNCATEGORIZED' Income category for default subcategory.")
 
 
             # --- (Optional) Default 'Cash' Bank Account ---
@@ -173,7 +185,7 @@ class Database:
             # print("Default data inserted/ensured.") # Less verbose
 
         except sqlite3.Error as e:
-            print(f"Error inserting default data: {e}")
+            debug_print('FOREIGN_KEYS', f"Error inserting default data: {e}")
             self.conn.rollback()
 
     def add_transaction(
@@ -189,19 +201,19 @@ class Database:
     ) -> Optional[int]: # Return new rowid or None
         """Add a new transaction to the database."""
         if not self.conn:
-            print("Error: No database connection available for adding transaction.")
+            debug_print('FOREIGN_KEYS', "Error: No database connection available for adding transaction.")
             return None
 
         # Basic validation of required IDs passed as parameters
         if account_id is None or category_id is None or sub_category_id is None:
-            print(f"Error adding transaction: Missing required ID(s) - Account: {account_id}, Category: {category_id}, SubCategory: {sub_category_id}")
+            debug_print('FOREIGN_KEYS', f"Error adding transaction: Missing required ID(s) - Account: {account_id}, Category: {category_id}, SubCategory: {sub_category_id}")
             return None
 
         # Validate date format (basic check)
         try:
             datetime.strptime(date_str, DB_DATE_FORMAT)
         except ValueError:
-            print(f"Error adding transaction: Invalid date format '{date_str}'. Expected 'YYYY-MM-DD'.")
+            debug_print('FOREIGN_KEYS', f"Error adding transaction: Invalid date format '{date_str}'. Expected 'YYYY-MM-DD'.")
             return None
 
         cursor = self.conn.cursor()
@@ -218,15 +230,15 @@ class Database:
                 if subcat_result:
                     # Set subcategory to UNCATEGORIZED
                     sub_category_id = subcat_result['id']
-                    print(f"Category is UNCATEGORIZED, setting subcategory to UNCATEGORIZED (ID: {sub_category_id})")
+                    debug_print('SUBCATEGORY', f"Category is UNCATEGORIZED, setting subcategory to UNCATEGORIZED (ID: {sub_category_id})")
                 else:
                     # Create UNCATEGORIZED subcategory if it doesn't exist
                     uncat_subcat_id = self.ensure_subcategory('UNCATEGORIZED', category_id)
                     if uncat_subcat_id:
                         sub_category_id = uncat_subcat_id
-                        print(f"Created and set UNCATEGORIZED subcategory (ID: {uncat_subcat_id}) for UNCATEGORIZED category")
+                        debug_print('SUBCATEGORY', f"Created and set UNCATEGORIZED subcategory (ID: {uncat_subcat_id}) for UNCATEGORIZED category")
         except sqlite3.Error as e:
-            print(f"Error checking category for UNCATEGORIZED: {e}")
+            debug_print('SUBCATEGORY', f"Error checking category for UNCATEGORIZED: {e}")
 
         try:
              # Use reverted column names in the INSERT statement
@@ -252,14 +264,14 @@ class Database:
             return new_rowid
         except sqlite3.IntegrityError as e:
              # This likely means a FOREIGN KEY constraint failed (e.g., invalid account_id, category_id)
-             print(f"Database Integrity Error adding transaction: {e}")
-             print(f"  > Data attempted: AccID={account_id}, CatID={category_id}, SubCatID={sub_category_id}, Type={type}, Date={date_str}")
+             debug_print('FOREIGN_KEYS', f"Database Integrity Error adding transaction: {e}")
+             debug_print('FOREIGN_KEYS', f"  > Data attempted: AccID={account_id}, CatID={category_id}, SubCatID={sub_category_id}, Type={type}, Date={date_str}")
              # Check if the referenced IDs actually exist (using the parameter values)
              self.check_foreign_keys(cursor, account_id, category_id, sub_category_id)
              self.conn.rollback() # Rollback on error
              return None
         except sqlite3.Error as e:
-            print(f"General Database Error adding transaction: {e}")
+            debug_print('FOREIGN_KEYS', f"General Database Error adding transaction: {e}")
             self.conn.rollback() # Rollback on error
             return None
 
@@ -267,21 +279,21 @@ class Database:
         """Helper to check if foreign key IDs exist (for debugging IntegrityError)."""
         try:
             cursor.execute("SELECT 1 FROM bank_accounts WHERE id = ?", (account_id,))
-            if not cursor.fetchone(): print(f"  > Debug FK Check: Account ID {account_id} does NOT exist.")
+            if not cursor.fetchone(): debug_print('FOREIGN_KEYS', f"  > Debug FK Check: Account ID {account_id} does NOT exist.")
             # Check against categories table using the category_id parameter
             cursor.execute("SELECT 1 FROM categories WHERE id = ?", (category_id,))
-            if not cursor.fetchone(): print(f"  > Debug FK Check: Category ID {category_id} does NOT exist.")
+            if not cursor.fetchone(): debug_print('FOREIGN_KEYS', f"  > Debug FK Check: Category ID {category_id} does NOT exist.")
             # Check against sub_categories table using the sub_category_id parameter
             cursor.execute("SELECT 1 FROM sub_categories WHERE id = ?", (sub_category_id,))
-            if not cursor.fetchone(): print(f"  > Debug FK Check: SubCategory ID {sub_category_id} does NOT exist.")
+            if not cursor.fetchone(): debug_print('FOREIGN_KEYS', f"  > Debug FK Check: SubCategory ID {sub_category_id} does NOT exist.")
             # Check subcategory links to category (using the parameter values)
             cursor.execute("SELECT category_id FROM sub_categories WHERE id = ?", (sub_category_id,))
             result = cursor.fetchone()
             if result and result['category_id'] != category_id:
-                print(f"  > Debug FK Check: SubCategory ID {sub_category_id} exists but belongs to Category ID {result['category_id']}, not {category_id}.")
+                debug_print('FOREIGN_KEYS', f"  > Debug FK Check: SubCategory ID {sub_category_id} exists but belongs to Category ID {result['category_id']}, not {category_id}.")
 
         except sqlite3.Error as e:
-            print(f"  > Debug FK Check: Error during check: {e}")
+            debug_print('FOREIGN_KEYS', f"  > Debug FK Check: Error during check: {e}")
 
 
     # --- Category/Subcategory Management ---
@@ -290,7 +302,7 @@ class Database:
         if not self.conn: return None
         category_name = category_name.strip()
         if not category_name or category_type not in ('Income', 'Expense'):
-            print(f"Error: Invalid input for ensure_category - Name: '{category_name}', Type: '{category_type}'")
+            debug_print('SUBCATEGORY', f"Error: Invalid input for ensure_category - Name: '{category_name}', Type: '{category_type}'")
             return None
 
         cursor = self.conn.cursor()
@@ -307,11 +319,11 @@ class Database:
                 return result['id'] # Access by name
             else:
                 # This should ideally not happen with INSERT OR IGNORE unless there's a severe issue
-                print(f"Error: Failed to find or create category '{category_name}' ({category_type}) after INSERT OR IGNORE.")
+                debug_print('SUBCATEGORY', f"Error: Failed to find or create category '{category_name}' ({category_type}) after INSERT OR IGNORE.")
                 self.conn.rollback() # Rollback potential failed insert
                 return None
         except sqlite3.Error as e:
-            print(f"DB Error ensuring category '{category_name}' ({category_type}): {e}")
+            debug_print('SUBCATEGORY', f"DB Error ensuring category '{category_name}' ({category_type}): {e}")
             self.conn.rollback()
             return None
 
@@ -320,7 +332,7 @@ class Database:
         if not self.conn: return None
         subcategory_name = subcategory_name.strip()
         if not subcategory_name or category_id is None:
-            print(f"Error: Invalid input for ensure_subcategory - Name: '{subcategory_name}', CategoryID: {category_id}")
+            debug_print('SUBCATEGORY', f"Error: Invalid input for ensure_subcategory - Name: '{subcategory_name}', CategoryID: {category_id}")
             return None
 
         cursor = self.conn.cursor()
@@ -328,7 +340,7 @@ class Database:
              # First check if the parent category exists
             cursor.execute("SELECT 1 FROM categories WHERE id = ?", (category_id,))
             if not cursor.fetchone():
-                print(f"Error: Cannot ensure subcategory '{subcategory_name}' because parent category ID {category_id} does not exist.")
+                debug_print('SUBCATEGORY', f"Error: Cannot ensure subcategory '{subcategory_name}' because parent category ID {category_id} does not exist.")
                 return None
 
             # Now ensure the subcategory exists for the valid parent
@@ -342,11 +354,11 @@ class Database:
                 self.conn.commit()
                 return result['id']
             else:
-                 print(f"Error: Failed to find or create subcategory '{subcategory_name}' for category ID {category_id} after INSERT OR IGNORE.")
+                 debug_print('SUBCATEGORY', f"Error: Failed to find or create subcategory '{subcategory_name}' for category ID {category_id} after INSERT OR IGNORE.")
                  self.conn.rollback()
                  return None
         except sqlite3.Error as e: # Catches IntegrityError (e.g., parent category deleted concurrently) and others
-            print(f"DB Error ensuring subcategory '{subcategory_name}' for category ID {category_id}: {e}")
+            debug_print('SUBCATEGORY', f"DB Error ensuring subcategory '{subcategory_name}' for category ID {category_id}: {e}")
             self.conn.rollback()
             return None
 
@@ -383,7 +395,7 @@ class Database:
             # Convert sqlite3.Row objects to standard dicts
             return [dict(row) for row in transactions]
         except sqlite3.Error as e:
-            print(f"Database error loading transactions for GUI: {e}")
+            debug_print('FOREIGN_KEYS', f"Database error loading transactions for GUI: {e}")
             return [] # Return empty list on error
 
     def get_accounts(self) -> List[Dict]:
@@ -396,7 +408,7 @@ class Database:
             # Convert to dict and rename 'account' to 'name' for consistency with GUI expectations
             return [{'id': row['id'], 'name': row['account']} for row in accounts]
         except sqlite3.Error as e:
-             print(f"Database error loading accounts: {e}")
+             debug_print('FOREIGN_KEYS', f"Database error loading accounts: {e}")
              return []
 
     def get_accounts_with_currency(self) -> List[Dict]:
@@ -422,7 +434,7 @@ class Database:
             # Convert to dict with all currency information
             return [dict(row) for row in accounts]
         except sqlite3.Error as e:
-             print(f"Database error loading accounts with currency: {e}")
+             debug_print('CURRENCY', f"Database error loading accounts with currency: {e}")
              return []
 
     def get_account_currency(self, account_id: int) -> Optional[Dict]:
@@ -433,7 +445,7 @@ class Database:
         try:
             account_id = int(account_id)
         except (ValueError, TypeError):
-            print(f"Warning: Invalid account_id: {account_id}, cannot convert to int")
+            debug_print('CURRENCY', f"Warning: Invalid account_id: {account_id}, cannot convert to int")
             return None
 
         cursor = self.conn.cursor()
@@ -456,7 +468,7 @@ class Database:
                 return None
 
         except sqlite3.Error as e:
-             print(f"Database error getting currency for account {account_id}: {e}")
+             debug_print('CURRENCY', f"Database error getting currency for account {account_id}: {e}")
              return None
 
     def get_categories(self) -> List[Dict]:
@@ -469,7 +481,7 @@ class Database:
             # Convert to dict and rename 'category' to 'name' for consistency with GUI expectations
             return [{'id': row['id'], 'name': row['category'], 'type': row['type']} for row in categories]
         except sqlite3.Error as e:
-             print(f"Database error loading categories: {e}")
+             debug_print('SUBCATEGORY', f"Database error loading categories: {e}")
              return []
 
     def get_subcategories(self) -> List[Dict]:
@@ -482,7 +494,7 @@ class Database:
             # Convert to dict and rename 'sub_category' to 'name' for consistency with GUI expectations
             return [{'id': row['id'], 'name': row['sub_category'], 'category_id': row['category_id']} for row in subcategories]
         except sqlite3.Error as e:
-             print(f"Database error loading subcategories: {e}")
+             debug_print('SUBCATEGORY', f"Database error loading subcategories: {e}")
              return []
 
     # --- Update and Delete Methods ---
@@ -506,15 +518,15 @@ class Database:
                     if subcat_result:
                         # Set subcategory to UNCATEGORIZED
                         data['transaction_sub_category'] = subcat_result['id']
-                        print(f"Category is UNCATEGORIZED, setting subcategory to UNCATEGORIZED (ID: {subcat_result['id']})")
+                        debug_print('SUBCATEGORY', f"Category is UNCATEGORIZED, setting subcategory to UNCATEGORIZED (ID: {subcat_result['id']})")
                     else:
                         # Create UNCATEGORIZED subcategory if it doesn't exist
                         uncat_subcat_id = self.ensure_subcategory('UNCATEGORIZED', category_id)
                         if uncat_subcat_id:
                             data['transaction_sub_category'] = uncat_subcat_id
-                            print(f"Created and set UNCATEGORIZED subcategory (ID: {uncat_subcat_id}) for UNCATEGORIZED category")
+                            debug_print('SUBCATEGORY', f"Created and set UNCATEGORIZED subcategory (ID: {uncat_subcat_id}) for UNCATEGORIZED category")
             except sqlite3.Error as e:
-                print(f"Error checking category for UNCATEGORIZED: {e}")
+                debug_print('SUBCATEGORY', f"Error checking category for UNCATEGORIZED: {e}")
 
         # Construct SET clause dynamically but safely
         set_parts = []
@@ -537,10 +549,10 @@ class Database:
                 else:
                     values.append(value)
             else:
-                print(f"Warning: Attempted to update disallowed column: {key}")
+                debug_print('FOREIGN_KEYS', f"Warning: Attempted to update disallowed column: {key}")
 
         if not set_parts:
-            print("Warning: No valid columns provided for update_transaction.")
+            debug_print('FOREIGN_KEYS', "Warning: No valid columns provided for update_transaction.")
             return False
 
         values.append(transaction_id) # Add the ID for the WHERE clause
@@ -552,8 +564,8 @@ class Database:
             self.conn.commit()
             return cursor.rowcount > 0 # Return True if at least one row was updated
         except sqlite3.IntegrityError as e:
-             print(f"Database Integrity Error updating transaction ID {transaction_id}: {e}")
-             print(f"  > Data attempted: {data}")
+             debug_print('FOREIGN_KEYS', f"Database Integrity Error updating transaction ID {transaction_id}: {e}")
+             debug_print('FOREIGN_KEYS', f"  > Data attempted: {data}")
              # Check if the referenced IDs actually exist (using potentially updated values from data dict)
              self.check_foreign_keys(cursor,
                                    data.get('account_id'),
@@ -563,7 +575,7 @@ class Database:
              self.conn.rollback()
              return False
         except sqlite3.Error as e:
-            print(f"Database Error updating transaction ID {transaction_id}: {e}")
+            debug_print('FOREIGN_KEYS', f"Database Error updating transaction ID {transaction_id}: {e}")
             self.conn.rollback()
             return False
 
@@ -582,7 +594,7 @@ class Database:
             self.conn.commit()
             return deleted_count
         except sqlite3.Error as e:
-            print(f"Database Error deleting transactions: {e}")
+            debug_print('FOREIGN_KEYS', f"Database Error deleting transactions: {e}")
             self.conn.rollback()
             return 0
 
@@ -595,9 +607,9 @@ class Database:
                  # self.conn.commit()
                  self.conn.close()
                  self.conn = None # Set to None after closing
-                 print("Database connection closed.")
+                 debug_print('FOREIGN_KEYS', "Database connection closed.")
             except sqlite3.Error as e:
-                 print(f"Error closing database connection: {e}")
+                 debug_print('FOREIGN_KEYS', f"Error closing database connection: {e}")
 
     def __del__(self):
         """Ensure connection is closed when object is garbage collected."""
