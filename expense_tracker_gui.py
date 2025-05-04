@@ -2583,8 +2583,18 @@ class ExpenseTrackerGUI(QMainWindow):
 
                             # Check if click is within the arrow/icon area - use relative coordinates
                             relative_x = cell_rect.right() - pos.x()
-                            if relative_x >= 0 and relative_x <= arrow_rect.width() and pos.y() >= cell_rect.top() and pos.y() <= cell_rect.bottom():
-                                click_on_icon = True
+
+                            # For date fields, use a wider clickable area
+                            if col_key == 'transaction_date':
+                                # Make the date icon more clickable
+                                if relative_x >= 0 and relative_x <= arrow_rect.width() and pos.y() >= cell_rect.top() and pos.y() <= cell_rect.bottom():
+                                    click_on_icon = True
+                                    print(f"DEBUG: Click on DATE icon detected for row {row}, col {col}, relative_x={relative_x}, arrow_width={arrow_rect.width()}")
+                            else:
+                                # Standard check for other dropdown fields
+                                if relative_x >= 0 and relative_x <= arrow_rect.width() and pos.y() >= cell_rect.top() and pos.y() <= cell_rect.bottom():
+                                    click_on_icon = True
+                                    print(f"DEBUG: Click on icon detected for row {row}, col {col}, key {col_key}")
 
                         # If clicked directly on the arrow/icon, force immediate dropdown/calendar opening
                         if click_on_icon and row < empty_row_index:
@@ -2602,15 +2612,8 @@ class ExpenseTrackerGUI(QMainWindow):
                                 # Make sure calendar popup is enabled
                                 editor.setCalendarPopup(True)
 
-                                # Force the calendar to show
-                                # We need to use a timer to ensure the calendar shows properly
-                                def show_calendar():
-                                    # Simply call the showPopup method which will display the calendar
-                                    # The calendar widget is already configured in the createEditor method
-                                    editor.showPopup()
-
-                                # Use a short timer to ensure the editor is fully initialized
-                                QTimer.singleShot(10, show_calendar)
+                                # Force the calendar to show immediately
+                                editor.calendarWidget().show()
 
                             return True  # Handled
 

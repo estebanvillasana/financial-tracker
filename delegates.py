@@ -137,8 +137,8 @@ class SpreadsheetDelegate(QStyledItemDelegate):
                 QDate(current_year + 10, 12, 31)  # 10 years in the future
             )
 
-            # Show dropdown immediately when editor is created
-            QTimer.singleShot(0, editor.showPopup)
+            # Make sure calendar popup is enabled
+            editor.setCalendarPopup(True)
 
             return editor
         elif col_key == 'account':
@@ -849,7 +849,19 @@ class SpreadsheetDelegate(QStyledItemDelegate):
             # We'll use this in the event filter to detect clicks on the arrow
             if not hasattr(self, 'arrow_rects'):
                 self.arrow_rects = {}
-            self.arrow_rects[(index.row(), index.column())] = arrow_rect
+
+            # Store the rect with a wider clickable area for easier interaction
+            # Make it even wider for date fields to ensure the calendar icon is clickable
+            if col_key == 'transaction_date':
+                # Make the clickable area for date fields even wider
+                date_arrow_width = 30  # Wider clickable area for date fields
+                date_arrow_rect = QRect(rect.right() - date_arrow_width, rect.top(), date_arrow_width, rect.height())
+                self.arrow_rects[(index.row(), index.column())] = date_arrow_rect
+
+                # Print debug info about the stored rect
+                print(f"DEBUG: Stored date arrow rect for row {index.row()}, col {index.column()}: {date_arrow_rect}")
+            else:
+                self.arrow_rects[(index.row(), index.column())] = arrow_rect
 
             # Check if this cell is being edited
             is_editing = False

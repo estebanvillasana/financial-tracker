@@ -77,18 +77,6 @@ class ArrowDateEdit(QDateEdit):
             self._original_date = date
         super().setDate(date)
 
-    def showPopup(self):
-        """Show the calendar popup"""
-        # This method is needed to match the interface of QComboBox
-        calendar = self.calendarWidget()
-        if calendar:
-            # Make sure the calendar shows the current date without changing it
-            # This prevents auto-selecting a different date
-            current_date = self.date()
-            calendar.setCurrentPage(current_date.year(), current_date.month())
-            calendar.setSelectedDate(current_date)
-            calendar.show()
-
     def paintEvent(self, event):
         # First draw the basic date edit
         super().paintEvent(event)
