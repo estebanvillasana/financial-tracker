@@ -48,13 +48,13 @@ class ColumnConfig:
 TRANSACTION_COLUMNS = [
     ColumnConfig(
         db_field="transaction_name",
-        display_title="Transaction Name",
-        width_percent=20,
+        display_title="Transaction",
+        width_percent=10,
     ),
     ColumnConfig(
         db_field="transaction_value",
         display_title="Value",
-        width_percent=12,
+        width_percent=15,
         alignment=ColumnAlignment.RIGHT,
         format_decimals=2,
         show_currency=True,
@@ -62,12 +62,12 @@ TRANSACTION_COLUMNS = [
     ColumnConfig(
         db_field="account",
         display_title="Account",
-        width_percent=15,
+        width_percent=12,
     ),
     ColumnConfig(
         db_field="transaction_type",
         display_title="Type",
-        width_percent=10,
+        width_percent=8,
     ),
     ColumnConfig(
         db_field="category",
@@ -82,7 +82,7 @@ TRANSACTION_COLUMNS = [
     ColumnConfig(
         db_field="transaction_description",
         display_title="Description",
-        width_percent=20,
+        width_percent=12,
     ),
     ColumnConfig(
         db_field="transaction_date",
