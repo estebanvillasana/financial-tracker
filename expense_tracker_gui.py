@@ -21,10 +21,12 @@ from PyQt6.QtGui import (QKeySequence, QShortcut, QColor, QFont, QIcon,
 from database import Database
 from delegates import SpreadsheetDelegate
 from commands import CellEditCommand
+from column_config import TRANSACTION_COLUMNS, DB_FIELDS, DISPLAY_TITLES, get_column_config
 
 class ExpenseTrackerGUI(QMainWindow):
     # Define the columns for the *display* table (match the data we'll fetch)
-    COLS = ['transaction_name', 'transaction_value', 'account', 'transaction_type', 'category', 'sub_category', 'transaction_description', 'transaction_date']
+    # Use the column configuration from column_config.py
+    COLS = DB_FIELDS
 
     def __init__(self):
         super().__init__()
@@ -151,7 +153,7 @@ class ExpenseTrackerGUI(QMainWindow):
         form_group.setLayout(form_grid)
 
         self.name_in = QLineEdit(placeholderText='Transaction Name')
-        self.value_in = QLineEdit(placeholderText='Amount (e.g., 12.34)')
+        self.value_in = QLineEdit(placeholderText='Value (e.g., 12.34)')
         self.type_in = QComboBox()
         self.type_in.addItems(['Expense', 'Income'])
         self.type_in.setPlaceholderText('Type')
@@ -167,7 +169,7 @@ class ExpenseTrackerGUI(QMainWindow):
 
         form_grid.addWidget(QLabel('Name:'), 0, 0)
         form_grid.addWidget(self.name_in, 0, 1)
-        form_grid.addWidget(QLabel('Amount:'), 0, 2)
+        form_grid.addWidget(QLabel('Value:'), 0, 2)
         form_grid.addWidget(self.value_in, 0, 3)
         form_grid.addWidget(QLabel('Type:'), 1, 0)
         form_grid.addWidget(self.type_in, 1, 1)
@@ -229,8 +231,18 @@ class ExpenseTrackerGUI(QMainWindow):
         tblbox.setContentsMargins(0,0,0,0)
 
         self.tbl = QTableWidget(0, len(self.COLS))
-        self.tbl.setHorizontalHeaderLabels(['Transaction Name', 'Amount', 'Account', 'Type', 'Category', 'Sub Category', 'Description', 'Date'])
-        self.tbl.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.tbl.setHorizontalHeaderLabels(DISPLAY_TITLES)
+
+        # Set column widths based on configuration
+        for col_idx, col_field in enumerate(self.COLS):
+            col_config = get_column_config(col_field)
+            if col_config and col_config.width_percent > 0:
+                # Set fixed width based on percentage of table width
+                # We'll update these widths when the table is resized
+                self.tbl.horizontalHeader().setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Interactive)
+            else:
+                # Use stretch mode for columns without specific width
+                self.tbl.horizontalHeader().setSectionResizeMode(col_idx, QHeaderView.ResizeMode.Stretch)
         self.tbl.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked |
                                QAbstractItemView.EditTrigger.EditKeyPressed)
         self.tbl.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
@@ -268,6 +280,9 @@ class ExpenseTrackerGUI(QMainWindow):
         self._message.setStyleSheet('color:#ffb300; font-weight:bold; padding:4px;')
         self.centralWidget().layout().addWidget(self._message)
         # --- End Message Label ---
+
+        # Connect resize event to update column widths
+        self.tbl.horizontalHeader().sectionResized.connect(self._update_column_widths)
 
     def _ensure_uncategorized_subcategories(self):
         """Ensure every category has an UNCATEGORIZED subcategory."""
@@ -482,6 +497,28 @@ class ExpenseTrackerGUI(QMainWindow):
             # Map fetched data using data_keys
             data = dict(zip(data_keys, r))
 
+            # Convert transaction_value to Decimal for proper formatting
+            if 'transaction_value' in data and data['transaction_value'] is not None:
+                data['transaction_value'] = Decimal(str(data['transaction_value']))
+
+            # Ensure account_id is available for currency display
+            if 'account' in data and isinstance(data['account'], str):
+                # Make sure account_id is an integer
+                if 'account_id' in data and data['account_id'] is not None:
+                    try:
+                        data['account_id'] = int(data['account_id'])
+                        print(f"DEBUG LOAD: Converted account_id to int: {data['account_id']} for account {data['account']}")
+                    except (ValueError, TypeError):
+                        # If account_id is not a valid integer, try to find it from account name
+                        data['account_id'] = None
+
+                # If account_id is still None or not set, try to find it from account name
+                if not data.get('account_id'):
+                    for acc in self._accounts_data:
+                        if acc['name'] == data['account']:
+                            data['account_id'] = acc['id']
+                            break
+
             # Ensure rowid is stored explicitly if needed elsewhere (though data['id'] covers it)
             # data['rowid'] = rowid # Reverted - 'rowid' is now the first key in data_keys
             self.transactions.append(data)
@@ -586,10 +623,97 @@ class ExpenseTrackerGUI(QMainWindow):
         # This signal is emitted *after* the data in the model has changed.
         # The Undo/Redo command system now handles updating the *underlying* data structures
         # (self.transactions, self.pending) and the dirty/error state based on the command's redo/undo.
-        # We just need to ensure recoloring and button states are updated.
+
+        # Check if the account column was edited (col 2)
+        if col == 2:  # Account column
+            # Update the currency display for the transaction value
+            self._update_currency_display_for_row(row)
+
+        # We need to ensure recoloring and button states are updated.
         self._recolor_row(row)
         self._update_button_states()
+
+        # Print the current table state to the terminal
+        self._debug_print_table()
+
         # Validation for pending/dirty rows now happens primarily in _save_changes
+
+    def _update_currency_display_for_row(self, row):
+        """Update the currency display for a specific row when the account changes."""
+        # Get the account name from the table
+        account_item = self.tbl.item(row, 2)  # Column 2 is Account
+        if not account_item or not account_item.text():
+            return
+
+        account_text = account_item.text()
+
+        # Check if the account text is an ID instead of a name
+        try:
+            # If the text is a number, it might be an ID
+            account_id = int(account_text)
+            # Find the account name for this ID
+            account_name = None
+            for acc in self._accounts_data:
+                if acc['id'] == account_id:
+                    account_name = acc['name']
+                    # Update the account cell with the name instead of ID
+                    account_item.setText(account_name)
+                    break
+
+            if not account_name:
+                return
+        except (ValueError, TypeError):
+            # If it's not a number, assume it's already the account name
+            account_name = account_text
+            # Find the account_id for this account name
+            account_id = None
+            for acc in self._accounts_data:
+                if acc['name'] == account_name:
+                    account_id = acc['id']
+                    break
+
+        if not account_id:
+            return
+
+        # Get the currency for this account
+        currency_info = self.db.get_account_currency(account_id)
+        if not currency_info or 'currency_symbol' not in currency_info:
+            return
+
+        # Get the current value from the table
+        value_item = self.tbl.item(row, 1)  # Column 1 is Value
+        if not value_item:
+            return
+
+        # Get the current value as a Decimal
+        try:
+            # Try to extract just the numeric part from the display text
+            display_text = value_item.text()
+            # Remove any currency symbols or non-numeric characters except decimal point
+            numeric_text = ''.join(c for c in display_text if c.isdigit() or c == '.' or c == '-')
+            if not numeric_text:
+                numeric_text = "0.00"
+            value = Decimal(numeric_text)
+        except (InvalidOperation, ValueError):
+            value = Decimal("0.00")
+
+        # Format with the currency symbol
+        formatted_value = self.locale.toString(float(value), 'f', 2)
+        display_text = f"{currency_info['currency_symbol']} {formatted_value}"
+
+        # Update the table cell
+        value_item.setText(display_text)
+
+        # Also update the underlying data
+        num_transactions = len(self.transactions)
+        if row < num_transactions:
+            self.transactions[row]['account'] = account_name
+            self.transactions[row]['account_id'] = account_id
+        else:
+            pending_idx = row - num_transactions
+            if pending_idx < len(self.pending):
+                self.pending[pending_idx]['account'] = account_name
+                self.pending[pending_idx]['account_id'] = account_id
 
     def _add_blank_row(self, focus_col=0):
         # --- Initialize Default Variables --- #
@@ -663,6 +787,9 @@ class ExpenseTrackerGUI(QMainWindow):
             # Do NOT call self.tbl.edit() here.
             # The eventFilter or delegate's setEditorData will handle starting the edit
             # if the user types or double-clicks after the cell is current.
+
+            # Print the table contents to the terminal
+            self._debug_print_table()
 
     def _recolor_row(self, row):
         if row < 0 or row >= self.tbl.rowCount(): return # Added bounds check
@@ -1372,6 +1499,28 @@ class ExpenseTrackerGUI(QMainWindow):
     def resizeEvent(self,e):
         super().resizeEvent(e)
         QTimer.singleShot(0, self._place_fab)
+        QTimer.singleShot(0, self._update_column_widths)
+
+    def _update_column_widths(self, logical_index=None, old_size=None, new_size=None):
+        """Update column widths based on configuration percentages."""
+        # This method is called when the table is resized or when a column is manually resized
+
+        # If this was triggered by a manual column resize, we don't want to override it
+        if logical_index is not None and old_size is not None and new_size is not None:
+            return
+
+        # Get the total width of the table
+        total_width = self.tbl.viewport().width()
+        if total_width <= 0:
+            return  # Table not visible yet
+
+        # Calculate and set widths based on configuration
+        for col_idx, col_field in enumerate(self.COLS):
+            col_config = get_column_config(col_field)
+            if col_config and col_config.width_percent > 0:
+                # Calculate width based on percentage
+                width = int(total_width * col_config.width_percent / 100)
+                self.tbl.setColumnWidth(col_idx, width)
 
     def _place_fab(self):
         # Adjust FAB position relative to the table viewport
@@ -1599,6 +1748,23 @@ class ExpenseTrackerGUI(QMainWindow):
             row_has_error = r in self.errors and bool(self.errors[r])
             row_is_dirty = rowid in self.dirty if rowid else False
 
+            # Ensure account_id is properly set for each row
+            if 'account' in row_data and isinstance(row_data['account'], str):
+                # Make sure account_id is an integer
+                if 'account_id' in row_data and row_data['account_id'] is not None:
+                    try:
+                        row_data['account_id'] = int(row_data['account_id'])
+                    except (ValueError, TypeError):
+                        # If account_id is not a valid integer, try to find it from account name
+                        row_data['account_id'] = None
+
+                # If account_id is still None or not set, try to find it from account name
+                if not row_data.get('account_id'):
+                    for acc in self._accounts_data:
+                        if acc['name'] == row_data['account']:
+                            row_data['account_id'] = acc['id']
+                            break
+
             # Determine base row color
             base_bg = color_base_even if r % 2 == 0 else color_base_odd
             if row_has_error: row_base_color = color_row_error_soft
@@ -1758,9 +1924,37 @@ class ExpenseTrackerGUI(QMainWindow):
                     item = QTableWidgetItem()
                     self.tbl.setItem(r, c, item)
 
-                # Use delegate's displayText for formatting (especially for numbers/dates)
-                # The delegate itself will need updating later for new types like account/category
-                display_text = delegate.displayText(value, self.locale) # Pass locale
+                # Special handling for transaction_value to ensure correct currency
+                if key == 'transaction_value' and isinstance(value, Decimal):
+                    # Format with the correct currency based on the account
+                    account_name = row_data.get('account')
+                    account_id = row_data.get('account_id')
+
+                    # If we have an account name but no ID, try to find the ID
+                    if account_name and not account_id:
+                        for acc in self._accounts_data:
+                            if acc['name'] == account_name:
+                                account_id = acc['id']
+                                row_data['account_id'] = account_id
+                                break
+
+                    # Get the currency for this account
+                    if account_id:
+                        currency_info = self.db.get_account_currency(account_id)
+                        if currency_info and 'currency_symbol' in currency_info:
+                            # Format with the currency symbol
+                            formatted_value = self.locale.toString(float(value), 'f', 2)
+                            display_text = f"{currency_info['currency_symbol']} {formatted_value}"
+                        else:
+                            # Use delegate's displayText as fallback
+                            display_text = delegate.displayText(value, self.locale)
+                    else:
+                        # Use delegate's displayText as fallback
+                        display_text = delegate.displayText(value, self.locale)
+                else:
+                    # Use delegate's displayText for formatting (especially for numbers/dates)
+                    # The delegate itself will need updating later for new types like account/category
+                    display_text = delegate.displayText(value, self.locale) # Pass locale
 
                 # Special handling for category display
                 if key == 'category' and row_data.get('category_id'):
@@ -1784,7 +1978,7 @@ class ExpenseTrackerGUI(QMainWindow):
                                 if subcat['category_id'] == row_data.get('category_id'):
                                     display_text = subcat['name']
                                     found = True
-                                    print(f"DEBUG REFRESH: Found matching subcategory '{subcat['name']}' (ID: {subcat['id']}) for category ID {row_data.get('category_id')}")
+
                                     break
                                 else:
                                     print(f"WARNING: Subcategory ID {subcat['id']} belongs to category {subcat['category_id']}, not {row_data.get('category_id')}")
@@ -1874,6 +2068,44 @@ class ExpenseTrackerGUI(QMainWindow):
                  self.tbl.setRangeSelected(new_range, True)
 
         self._update_button_states() # Update button states based on pending/dirty
+
+        # Print the table contents to the terminal
+        self._debug_print_table()
+
+    def _debug_print_table(self):
+        """Debug function to print the table contents to the terminal."""
+        print("\n===== TABLE CONTENTS =====")
+        print(f"{'Row':<4} | {'Transaction Name':<20} | {'Value':<15} | {'Account':<20} | {'Type':<10} | {'Category':<20} | {'Sub Category':<20}")
+        print("-" * 120)
+
+        for row in range(self.tbl.rowCount() - 1):  # Skip the '+' row
+            row_data = []
+            for col in range(self.tbl.columnCount()):
+                item = self.tbl.item(row, col)
+                text = item.text() if item else ""
+                row_data.append(text)
+
+            # Format the row data
+            print(f"{row:<4} | {row_data[0][:20]:<20} | {row_data[1][:15]:<15} | {row_data[2][:20]:<20} | {row_data[3][:10]:<10} | {row_data[4][:20]:<20} | {row_data[5][:20]:<20}")
+
+        print("========================\n")
+
+        # Print the underlying data for each row
+        print("===== UNDERLYING DATA =====")
+        all_data = self.transactions + self.pending
+        for i, data in enumerate(all_data):
+            account_id = data.get('account_id')
+            account_name = data.get('account')
+            currency_info = None
+            if account_id is not None:
+                try:
+                    currency_info = self.db.get_account_currency(account_id)
+                except Exception as e:
+                    print(f"Error getting currency for account {account_id}: {e}")
+
+            print(f"Row {i}: Account={account_name}, Account ID={account_id}, Currency={currency_info}")
+
+        print("========================\n")
 
     def _update_button_states(self):
         has_changes = bool(self.pending) or bool(self.dirty)

@@ -8,6 +8,7 @@ from PyQt6.QtGui import QColor, QIcon, QDoubleValidator # QDoubleValidator might
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from commands import CellEditCommand
+from column_config import get_column_config
 
 class SpreadsheetDelegate(QStyledItemDelegate):
     def __init__(self, parent=None):
@@ -349,7 +350,26 @@ class SpreadsheetDelegate(QStyledItemDelegate):
                  amount_decimal = Decimal('0.00') # Default
                  if isinstance(value, Decimal):
                       amount_decimal = value
-                 elif value is not None: # Try converting if not Decimal (e.g., float, str)
+                 elif isinstance(value, str):
+                      # If it's a string, it might have currency symbols - clean it up
+                      try:
+                           # Remove any currency symbols or codes that might be in the string
+                           cleaned_value = value
+                           # Remove common currency symbols
+                           for symbol in ['$', '€', '£', '¥', '₹', '₽', '₩', '₴', '₦', '₱', '฿', '₫', '₲', '₪', '₡', '₢', '₣', '₤', '₥', '₧', '₨', '₩', '₭', '₮', '₯', '₰', '₱', '₲', '₳', '₴', '₵', '₶', '₷', '₸', '₹', '₺', '₻', '₼', '₽', '₾', '₿']:
+                               cleaned_value = cleaned_value.replace(symbol, '')
+                           # Remove currency codes (like USD, EUR, etc.)
+                           import re
+                           cleaned_value = re.sub(r'\b[A-Z]{3}\b', '', cleaned_value)
+                           # Remove extra spaces and normalize decimal separator
+                           cleaned_value = cleaned_value.strip()
+                           cleaned_value = cleaned_value.replace(self.locale.groupSeparator(), '')
+                           cleaned_value = cleaned_value.replace(self.locale.decimalPoint(), '.')
+                           amount_decimal = Decimal(cleaned_value)
+                      except (InvalidOperation, ValueError):
+                           print(f"Warning: Could not convert string value '{value}' to Decimal in setEditorData.")
+                           amount_decimal = Decimal('0.00')
+                 elif value is not None: # Try converting if not Decimal (e.g., float)
                       try:
                            amount_decimal = Decimal(str(value))
                       except InvalidOperation:
@@ -631,13 +651,26 @@ class SpreadsheetDelegate(QStyledItemDelegate):
                     try:
                         # Use locale-aware conversion from string to Decimal
                         # Remove group separators, then replace locale decimal point with '.'
-                        cleaned_text = text.replace(self.locale.groupSeparator(), '')
+                        cleaned_text = text
+
+                        # Remove common currency symbols
+                        for symbol in ['$', '€', '£', '¥', '₹', '₽', '₩', '₴', '₦', '₱', '฿', '₫', '₲', '₪', '₡', '₢', '₣', '₤', '₥', '₧', '₨', '₩', '₭', '₮', '₯', '₰', '₱', '₲', '₳', '₴', '₵', '₶', '₷', '₸', '₹', '₺', '₻', '₼', '₽', '₾', '₿']:
+                            cleaned_text = cleaned_text.replace(symbol, '')
+
+                        # Remove currency codes (like USD, EUR, etc.)
+                        import re
+                        cleaned_text = re.sub(r'\b[A-Z]{3}\b', '', cleaned_text)
+
+                        # Remove extra spaces and normalize decimal separator
+                        cleaned_text = cleaned_text.strip()
+                        cleaned_text = cleaned_text.replace(self.locale.groupSeparator(), '')
                         cleaned_text = cleaned_text.replace(self.locale.decimalPoint(), '.')
+
                         # Also remove currency symbol if present
                         cleaned_text = cleaned_text.replace(self.locale.currencySymbol(), '').strip()
 
                         amount_decimal = Decimal(cleaned_text)
-                        # Optional: Quantize to 2 decimal places upon commit
+                        # Always quantize to 2 decimal places upon commit
                         amount_decimal = amount_decimal.quantize(Decimal("0.00"), rounding=ROUND_HALF_UP)
 
                         new_value_for_model = amount_decimal # Store Decimal in model
@@ -715,12 +748,113 @@ class SpreadsheetDelegate(QStyledItemDelegate):
         # It receives the raw data from the model (DisplayRole or EditRole fallback).
         # Value type depends on what the model provides (needs consistency!).
 
-        # Handle Decimal for amount
+        # Get the current row and column if possible
+        current_row = -1
+        current_col = -1
+        current_col_key = None
+
+        # Try to get the current index from the parent view
+        if self.parent_window and hasattr(self.parent_window, 'tbl'):
+            current_index = self.parent_window.tbl.currentIndex()
+            if current_index.isValid():
+                current_row = current_index.row()
+                current_col = current_index.column()
+                if hasattr(self.parent_window, 'COLS') and current_col < len(self.parent_window.COLS):
+                    current_col_key = self.parent_window.COLS[current_col]
+
+        # Handle Decimal for amount/value
         if isinstance(value, Decimal):
-            # Format Decimal using locale. Use float conversion for toString compatibility.
+            # Get column configuration if available
+            col_config = get_column_config('transaction_value')
+            decimals = 2  # Default to 2 decimal places
+            if col_config and col_config.format_decimals is not None:
+                decimals = col_config.format_decimals
+
+            # Format Decimal using locale with specified decimal places
             try:
-                return self.locale.toString(float(value), 'f', 2)
-            except Exception: # Handle potential float conversion errors for edge cases like NaN
+                formatted_value = self.locale.toString(float(value), 'f', decimals)
+
+                # Add currency symbol if configured and we can determine the account
+                if col_config and col_config.show_currency and self.parent_window:
+                    # Try to get the transaction data for the current row
+                    transaction_data = None
+                    account_name = None
+
+                    # Get the actual row we're displaying, not just the current selected row
+                    actual_row = -1
+                    if isinstance(current_index, QModelIndex) and current_index.isValid():
+                        actual_row = current_index.row()
+
+                        # Get the account name from the table directly
+                        account_item = self.parent_window.tbl.item(actual_row, 2)  # Column 2 is Account
+                        if account_item and account_item.text():
+                            account_name = account_item.text()
+
+                        else:
+                            # Try to get the account name from the underlying data
+                            if actual_row < len(self.parent_window.transactions):
+                                account_name = self.parent_window.transactions[actual_row].get('account')
+
+                            elif actual_row - len(self.parent_window.transactions) < len(self.parent_window.pending):
+                                pending_idx = actual_row - len(self.parent_window.transactions)
+                                account_name = self.parent_window.pending[pending_idx].get('account')
+
+                    # If we have a valid row, get the transaction data directly
+                    if actual_row >= 0:
+                        # Use the actual row to get the transaction data
+                        if actual_row < len(self.parent_window.transactions):
+                            transaction_data = self.parent_window.transactions[actual_row]
+
+                        elif actual_row - len(self.parent_window.transactions) < len(self.parent_window.pending):
+                            pending_idx = actual_row - len(self.parent_window.transactions)
+                            transaction_data = self.parent_window.pending[pending_idx]
+
+                    # If we have an account name but no transaction data, try to find the account ID
+                    if account_name:
+                        # Find account ID from account name - this takes precedence over transaction_data
+                        # because the account shown in the table is what matters
+                        account_id = None
+                        for acc in self.parent_window._accounts_data:
+                            if acc['name'] == account_name:
+                                account_id = acc['id']
+
+                                # Create a minimal transaction data with just the account info
+                                transaction_data = {
+                                    'account': account_name,
+                                    'account_id': account_id,
+                                    'transaction_value': value
+                                }
+                                break
+
+                    # If we have transaction data with an account_id, get the currency
+                    if transaction_data and 'account_id' in transaction_data and hasattr(self.parent_window, 'db'):
+                        account_id = transaction_data['account_id']
+
+
+                        # If account_id is None but we have account name, try to find account_id
+                        if account_id is None and 'account' in transaction_data and transaction_data['account']:
+                            for acc in self.parent_window._accounts_data:
+                                if acc['name'] == transaction_data['account']:
+                                    account_id = acc['id']
+                                    transaction_data['account_id'] = account_id
+                                    print(f"DEBUG CURRENCY: Found account_id {account_id} for account {transaction_data['account']}")
+                                    break
+
+                        if account_id is not None:
+                            currency_info = self.parent_window.db.get_account_currency(account_id)
+                            if currency_info and 'currency_symbol' in currency_info:
+                                # Format with just the currency symbol (which already includes the code in our case)
+                                currency_display = f"{currency_info['currency_symbol']} {formatted_value}"
+                                print(f"DEBUG CURRENCY: Formatted with currency: {currency_display}")
+                                return currency_display
+                        else:
+                            print(f"DEBUG CURRENCY: Could not determine account_id for currency display")
+
+                # If we couldn't get currency info or it's not configured, return just the formatted value
+                return formatted_value
+
+            except Exception as e: # Handle potential float conversion errors for edge cases like NaN
+                print(f"Error formatting decimal value: {e}")
                 return "Error" # Or some indicator
 
         # Handle Date (assuming model stores 'yyyy-MM-dd' string)

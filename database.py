@@ -399,6 +399,66 @@ class Database:
              print(f"Database error loading accounts: {e}")
              return []
 
+    def get_accounts_with_currency(self) -> List[Dict]:
+        """Fetches all accounts with their currency information."""
+        if not self.conn: return []
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT
+                    ba.id,
+                    ba.account,
+                    ba.account_type,
+                    ba.account_details,
+                    ba.currency_id,
+                    c.currency,
+                    c.currency_code,
+                    c.currency_symbol
+                FROM bank_accounts ba
+                JOIN currencies c ON ba.currency_id = c.id
+                ORDER BY ba.account
+            """)
+            accounts = cursor.fetchall()
+            # Convert to dict with all currency information
+            return [dict(row) for row in accounts]
+        except sqlite3.Error as e:
+             print(f"Database error loading accounts with currency: {e}")
+             return []
+
+    def get_account_currency(self, account_id: int) -> Optional[Dict]:
+        """Get currency information for a specific account."""
+        if not self.conn: return None
+
+        # Ensure account_id is an integer
+        try:
+            account_id = int(account_id)
+        except (ValueError, TypeError):
+            print(f"Warning: Invalid account_id: {account_id}, cannot convert to int")
+            return None
+
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT
+                    c.id AS currency_id,
+                    c.currency,
+                    c.currency_code,
+                    c.currency_symbol
+                FROM bank_accounts ba
+                JOIN currencies c ON ba.currency_id = c.id
+                WHERE ba.id = ?
+            """, (account_id,))
+            result = cursor.fetchone()
+
+            if result:
+                return dict(result)
+            else:
+                return None
+
+        except sqlite3.Error as e:
+             print(f"Database error getting currency for account {account_id}: {e}")
+             return None
+
     def get_categories(self) -> List[Dict]:
         """Fetches all categories (ID, name, type) for dropdowns."""
         if not self.conn: return []
