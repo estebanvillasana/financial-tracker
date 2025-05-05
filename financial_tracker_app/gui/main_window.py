@@ -47,10 +47,10 @@ class ExpenseTrackerGUI(QMainWindow):
     def __init__(self):
         super().__init__()
         self.db = Database()
-        
+
         # Use category manager from database
         self.category_manager = self.db.category_manager
-        
+
         self.transactions = []
         self.pending = []
         self.dirty = set()
@@ -565,14 +565,1001 @@ class ExpenseTrackerGUI(QMainWindow):
                 self._update_button_states()
                 self._show_message("New transaction updated. Don't forget to save changes!", error=False)
 
+    def _ensure_uncategorized_subcategories(self):
+        """Ensure every category has an UNCATEGORIZED subcategory."""
+        for category in self._categories_data:
+            # Check if this category already has an UNCATEGORIZED subcategory
+            has_uncategorized = False
+            for subcat in self._subcategories_data:
+                if subcat['category_id'] == category['id'] and subcat['name'] == 'UNCATEGORIZED':
+                    has_uncategorized = True
+                    break
+
+            # If not, create one
+            if not has_uncategorized:
+                print(f"Creating UNCATEGORIZED subcategory for category {category['name']} (ID: {category['id']})")
+                subcategory_id = self.db.ensure_subcategory('UNCATEGORIZED', category['id'])
+                if subcategory_id:
+                    # Add to our local data
+                    self._subcategories_data.append({
+                        'id': subcategory_id,
+                        'name': 'UNCATEGORIZED',
+                        'category_id': category['id']
+                    })
+                else:
+                    print(f"Failed to create UNCATEGORIZED subcategory for category {category['name']}")
+
+    def _load_dropdown_data(self):
+        """Load data needed for dropdowns (accounts, categories, etc.)."""
+        # Clear existing data
+        self._accounts_data = []
+        self._categories_data = []
+        self._subcategories_data = []
+
+        # CRITICAL FIX: Create a mapping of ID conflicts
+        # This ensures that category ID 1 is always treated as UNCATEGORIZED, not Bank of America
+        self._id_conflict_mapping = {
+            'category': {
+                1: 'UNCATEGORIZED'  # Force category ID 1 to always be UNCATEGORIZED
+            },
+            'sub_category': {}  # Will be populated as subcategories are loaded
+        }
+
+        # Create a set to track IDs that have been seen to detect conflicts
+        self._seen_ids = {
+            'category': set(),
+            'sub_category': set()
+        }
+
+        try:
+            cur = self.db.conn.cursor()
+            cur.execute("SELECT id, account FROM bank_accounts ORDER BY account")
+            self._accounts_data = [{'id': row[0], 'name': row[1]} for row in cur.fetchall()]
+
+            # Load categories with ID conflict detection
+            cur.execute("SELECT id, category, type FROM categories ORDER BY type, category")
+            for row in cur.fetchall():
+                category_id = row[0]
+                category_name = row[1]
+                category_type = row[2]
+
+                # Check for ID conflicts
+                if category_id in self._seen_ids['category']:
+                    debug_print('CATEGORY', f"WARNING: Detected duplicate category ID: {category_id} for '{category_name}'")
+                    # Add to conflict mapping if not already there
+                    if category_id not in self._id_conflict_mapping['category']:
+                        self._id_conflict_mapping['category'][category_id] = category_name
+                        debug_print('CATEGORY', f"Added conflict mapping for category ID {category_id}: '{category_name}'")
+                else:
+                    # Mark this ID as seen
+                    self._seen_ids['category'].add(category_id)
+
+                # Special case for ID 1 - always force to UNCATEGORIZED
+                if category_id == 1 and category_name != 'UNCATEGORIZED':
+                    debug_print('CATEGORY', f"WARNING: Category ID 1 is '{category_name}', forcing to 'UNCATEGORIZED'")
+                    # Keep the original name in the data structure but ensure it displays as UNCATEGORIZED
+
+                self._categories_data.append({
+                    'id': category_id,
+                    'name': category_name,
+                    'type': category_type
+                })
+
+            # Load subcategories with ID conflict detection
+            cur.execute("SELECT id, sub_category, category_id FROM sub_categories ORDER BY category_id, sub_category")
+            for row in cur.fetchall():
+                subcategory_id = row[0]
+                subcategory_name = row[1]
+                category_id = row[2]
+
+                # Check for ID conflicts
+                if subcategory_id in self._seen_ids['sub_category']:
+                    debug_print('SUBCATEGORY', f"WARNING: Detected duplicate subcategory ID: {subcategory_id} for '{subcategory_name}'")
+                    # Add to conflict mapping if not already there
+                    if subcategory_id not in self._id_conflict_mapping['sub_category']:
+                        self._id_conflict_mapping['sub_category'][subcategory_id] = subcategory_name
+                        debug_print('SUBCATEGORY', f"Added conflict mapping for subcategory ID {subcategory_id}: '{subcategory_name}'")
+                else:
+                    # Mark this ID as seen
+                    self._seen_ids['sub_category'].add(subcategory_id)
+
+                self._subcategories_data.append({
+                    'id': subcategory_id,
+                    'name': subcategory_name,
+                    'category_id': category_id
+                })
+
+            # Ensure every category has an UNCATEGORIZED subcategory
+            self._ensure_uncategorized_subcategories()
+        except Exception as e:
+            print(f"Error loading dropdown data: {e}")
+            # Initialize with empty lists if there's an error
+            self._accounts_data = []
+            self._categories_data = []
+            self._subcategories_data = []
+
+        # Ensure the delegate's data sources are updated after any changes
+        if hasattr(self.tbl, 'itemDelegate'):
+            delegate = self.tbl.itemDelegate()
+            if isinstance(delegate, SpreadsheetDelegate):
+                delegate.setEditorDataSources(
+                    self._accounts_data,
+                    self._categories_data,
+                    self._subcategories_data
+                )
+
+    def _populate_initial_form_dropdowns(self):
+        """Populate form dropdowns initially after data is loaded."""
+        # Populate accounts
+        self.account_in.clear()
+        debug_print('DROPDOWN', "--- Populating Accounts Dropdown ---")
+        for i, acc in enumerate(self._accounts_data):
+            # Debug Print for dropdown population
+            debug_print('DROPDOWN', f"Adding item {i}: Name='{acc['name']}', ID={acc['id']} (Type: {type(acc['id'])})")
+            self.account_in.addItem(acc['name'], userData=acc['id']) # Store ID in userData
+            # Verification Print
+            added_data = self.account_in.itemData(i)
+            debug_print('DROPDOWN', f"  > Verified itemData({i}): {added_data} (Type: {type(added_data)})")
+        debug_print('DROPDOWN', "--- Accounts Populated ---")
+
+        if not self._accounts_data:
+            self.account_in.setPlaceholderText('Select Account')
+
+        self.type_in.setCurrentText('Expense')
+        self._filter_categories_for_form()
+        self._filter_subcategories_for_form()
+
+        self.type_in.currentIndexChanged.connect(self._filter_categories_for_form)
+        self.cat_in.currentIndexChanged.connect(self._filter_subcategories_for_form)
+
+    def _filter_categories_for_form(self):
+        """Filters the category dropdown based on the selected transaction type."""
+        selected_type = self.type_in.currentText()
+        current_category_id = self.cat_in.currentData() # Get previously stored ID if any
+
+        debug_print('DROPDOWN', f"--- Filtering Categories for Type: {selected_type} ---")
+        self.cat_in.blockSignals(True)
+        self.cat_in.clear()
+        found_current = False
+        default_index = -1
+        for i, cat in enumerate(self._categories_data):
+            if cat['type'] == selected_type:
+                # Check if this category ID has a conflict mapping
+                display_name = cat['name']
+                if cat['id'] in self._id_conflict_mapping.get('category', {}):
+                    display_name = self._id_conflict_mapping['category'][cat['id']]
+                    debug_print('DROPDOWN', f"  Using conflict mapping for category ID {cat['id']}: '{display_name}' instead of '{cat['name']}'")
+
+                # Debug Print for category dropdown
+                debug_print('DROPDOWN', f"  Adding Cat item {self.cat_in.count()}: Name='{display_name}', ID={cat['id']} (Type: {type(cat['id'])})")
+                self.cat_in.addItem(display_name, userData=cat['id'])
+                # Verification Print
+                added_data = self.cat_in.itemData(self.cat_in.count() - 1)
+                debug_print('DROPDOWN', f"    > Verified itemData({self.cat_in.count() - 1}): {added_data} (Type: {type(added_data)})")
+
+                if cat['id'] == current_category_id:
+                    found_current = True
+                if cat['name'] == 'UNCATEGORIZED':
+                    default_index = self.cat_in.count() - 1
+
+        # Restore selection or set default
+        restored_idx = -1
+        if found_current and current_category_id is not None:
+            restored_idx = self.cat_in.findData(current_category_id)
+            self.cat_in.setCurrentIndex(restored_idx)
+        elif default_index != -1:
+            restored_idx = default_index
+            self.cat_in.setCurrentIndex(default_index)
+        elif self.cat_in.count() > 0:
+            restored_idx = 0
+            self.cat_in.setCurrentIndex(0)
+        else:
+            self.cat_in.setPlaceholderText(f"No {selected_type} Categories")
+        debug_print('DROPDOWN', f"--- Categories Filtered. Selected index: {restored_idx} ---")
+
+        self.cat_in.blockSignals(False)
+        # Must trigger subcategory filter AFTER potentially changing category index
+        self._filter_subcategories_for_form() # Trigger subcategory filtering
+
+    def _filter_subcategories_for_form(self):
+        """Filters the subcategory dropdown based on the selected category."""
+        selected_category_id = self.cat_in.currentData() # Get ID from category dropdown
+        current_subcategory_id = self.subcat_in.currentData() # Get previously stored ID if any
+
+        debug_print('DROPDOWN', f"--- Filtering SubCats for Category ID: {selected_category_id} ---")
+        self.subcat_in.blockSignals(True)
+        self.subcat_in.clear()
+        found_current = False
+        default_index = -1
+
+        if selected_category_id is not None:
+            for i, subcat in enumerate(self._subcategories_data):
+                if subcat['category_id'] == selected_category_id:
+                    # Check if this subcategory ID has a conflict mapping
+                    display_name = subcat['name']
+                    if subcat['id'] in self._id_conflict_mapping.get('sub_category', {}):
+                        display_name = self._id_conflict_mapping['sub_category'][subcat['id']]
+                        debug_print('DROPDOWN', f"  Using conflict mapping for subcategory ID {subcat['id']}: '{display_name}' instead of '{subcat['name']}'")
+
+                    # Debug Print for subcategory dropdown
+                    debug_print('DROPDOWN', f"  Adding SubCat item {self.subcat_in.count()}: Name='{display_name}', ID={subcat['id']} (Type: {type(subcat['id'])})")
+                    self.subcat_in.addItem(display_name, userData=subcat['id'])
+                    # Verification Print
+                    added_data = self.subcat_in.itemData(self.subcat_in.count() - 1)
+                    debug_print('DROPDOWN', f"    > Verified itemData({self.subcat_in.count() - 1}): {added_data} (Type: {type(added_data)})")
+
+                    if subcat['id'] == current_subcategory_id:
+                        found_current = True
+                    if subcat['name'] == 'UNCATEGORIZED':
+                         default_index = self.subcat_in.count() - 1
+
+        # Restore selection or set default
+        restored_idx = -1
+        if found_current and current_subcategory_id is not None:
+            restored_idx = self.subcat_in.findData(current_subcategory_id)
+            self.subcat_in.setCurrentIndex(restored_idx)
+        elif default_index != -1:
+            restored_idx = default_index
+            self.subcat_in.setCurrentIndex(default_index)
+        elif self.subcat_in.count() > 0:
+            restored_idx = 0
+            self.subcat_in.setCurrentIndex(0)
+        else:
+            self.subcat_in.setPlaceholderText("No Subcategories")
+        debug_print('DROPDOWN', f"--- Subcategories Filtered. Selected index: {restored_idx} ---")
+
+        self.subcat_in.blockSignals(False)
+
+    def _get_category_id(self, category_name):
+        for cat in self._categories_data:
+            if cat['name'] == category_name:
+                return cat['id']
+        return None
+
+    def _load_transactions(self, refresh_ui=True):
+        """Load transactions from the database and update internal state."""
+        cur=self.db.conn.cursor()
+        try:
+             # Fetch data using JOINs to get names instead of IDs
+             cur.execute("""
+                SELECT
+                    t.id,                       -- 0: Transaction rowid (for internal tracking)
+                    COALESCE(t.transaction_name, ''), -- 1: Transaction Name
+                    t.transaction_value,        -- 2: Amount
+                    ba.account,                 -- 3: Bank Account Name
+                    t.transaction_type,         -- 4: Type ('Income'/'Expense') - now displayed in the table
+                    c.category,                 -- 5: Category Name
+                    sc.sub_category,            -- 6: Sub Category Name
+                    COALESCE(t.transaction_description, ''), -- 7: Description
+                    t.transaction_date,         -- 8: Date
+                    t.account_id,               -- 9: Account ID
+                    t.transaction_category,     -- 10: Category ID (Reverted name)
+                    t.transaction_sub_category  -- 11: SubCategory ID (Reverted name)
+                FROM transactions t
+                LEFT JOIN bank_accounts ba ON t.account_id = ba.id
+                LEFT JOIN categories c ON t.transaction_category = c.id
+                LEFT JOIN sub_categories sc ON t.transaction_sub_category = sc.id
+                ORDER BY t.transaction_date DESC, t.id DESC
+            """)
+        except sqlite3.Error as e:
+             # Handle potential errors more gracefully
+             print(f"Database error loading transactions: {e}")
+             QMessageBox.critical(self, "Database Error", f"Could not load transactions: {e}")
+             self.transactions = [] # Clear data on error
+             # Fallback? Maybe try simpler query or exit?
+
+
+        self.transactions = [] # Renamed from self.expenses
+        self._original_data_cache = {} # Clear cache
+        # Define the keys corresponding to the SELECT statement order
+        # Reverted to original column names
+        data_keys = ['rowid', 'transaction_name', 'transaction_value', 'account', 'transaction_type', 'category', 'sub_category', 'transaction_description', 'transaction_date', 'account_id', 'transaction_category', 'transaction_sub_category']
+
+        fetched_data = cur.fetchall() if cur else []
+
+        for r in fetched_data:
+            rowid = r[0] # Use the first column (t.id) as the rowid
+            # Map fetched data using data_keys
+            data = dict(zip(data_keys, r))
+
+            # Convert transaction_value to Decimal for proper formatting
+            if 'transaction_value' in data and data['transaction_value'] is not None:
+                data['transaction_value'] = Decimal(str(data['transaction_value']))
+
+            # Ensure account_id is available for currency display
+            if 'account' in data and isinstance(data['account'], str):
+                # Make sure account_id is an integer
+                if 'account_id' in data and data['account_id'] is not None:
+                    try:
+                        data['account_id'] = int(data['account_id'])
+                        debug_print('ACCOUNT_CONVERSION', f"Converted account_id to int: {data['account_id']} for account {data['account']}")
+                    except (ValueError, TypeError):
+                        # If account_id is not a valid integer, try to find it from account name
+                        data['account_id'] = None
+
+                # If account_id is still None or not set, try to find it from account name
+                if not data.get('account_id'):
+                    for acc in self._accounts_data:
+                        if acc['name'] == data['account']:
+                            data['account_id'] = acc['id']
+                            break
+
+            # Ensure rowid is stored explicitly if needed elsewhere (though data['id'] covers it)
+            # data['rowid'] = rowid # Reverted - 'rowid' is now the first key in data_keys
+            self.transactions.append(data)
+            self._original_data_cache[rowid] = data.copy()
+
+        self.pending.clear()
+        self.dirty.clear()
+        self.dirty_fields.clear()
+        self.errors.clear()
+        if refresh_ui:
+            self._refresh() # _refresh will need significant updates too
+
+    def _add_form(self):
+        """Handles adding a transaction from the form inputs."""
+        # --- Get Raw Data from Form ---
+        name = self.name_in.text().strip()
+        value_str = self.value_in.text().strip().replace(self.locale.groupSeparator(),'').replace(self.locale.currencySymbol(),'').replace(self.locale.decimalPoint(),'.')
+        type_str = self.type_in.currentText() # 'Income' or 'Expense'
+        # Get selected index first to ensure an item is chosen
+        account_idx = self.account_in.currentIndex()
+        category_idx = self.cat_in.currentIndex()
+        subcategory_idx = self.subcat_in.currentIndex()
+
+        account_id = self.account_in.itemData(account_idx) if account_idx >= 0 else None
+        category_id = self.cat_in.itemData(category_idx) if category_idx >= 0 else None
+        subcategory_id = self.subcat_in.itemData(subcategory_idx) if subcategory_idx >= 0 else None
+
+        # Get description from QLineEdit
+        description = self.desc_in.text().strip()
+        date_str = self.date_in.date().toString('yyyy-MM-dd')
+
+        # --- Basic Validation --- (More robust validation in _validate_row for edits)
+        if not value_str:
+            self._show_message('Amount is required', error=True); return
+        if not type_str:
+            self._show_message('Transaction Type is required', error=True); return
+        if account_id is None or account_idx < 0:
+            self._show_message('A valid Bank Account must be selected', error=True); return
+        if category_id is None or category_idx < 0:
+            self._show_message('A valid Category must be selected', error=True); return
+
+        # Ensure UNCATEGORIZED subcategory if none selected
+        if subcategory_id is None or subcategory_idx < 0:
+             if category_id is not None:
+                 print(f"Attempting to ensure UNCATEGORIZED subcategory for category ID {category_id}")
+                 subcategory_id = self.db.ensure_subcategory('UNCATEGORIZED', category_id)
+                 if subcategory_id:
+                     print(f"Using ensured UNCATEGORIZED subcategory ID: {subcategory_id}")
+                     # Reload dropdown data & repopulate subcat dropdown
+                     QTimer.singleShot(0, self._load_dropdown_data)
+                     QTimer.singleShot(10, self._filter_subcategories_for_form) # Delay slightly
+                 else:
+                     self._show_message('Could not select/ensure UNCATEGORIZED subcategory.', error=True); return
+             else:
+                 self._show_message('Sub Category is required (and category is missing)', error=True); return
+
+        try:
+            # Convert value string to Decimal
+            cleaned_value_str = value_str.replace(self.locale.groupSeparator(),'').replace(self.locale.currencySymbol(),'')
+            value_decimal = Decimal(cleaned_value_str)
+        except InvalidOperation:
+            self._show_message('Invalid amount format', error=True); return
+
+        # --- Add to Database via Database class method ---
+        # Debug print is still here, should show valid IDs now
+        print(f"--- DEBUG: Calling db.add_transaction ---")
+        print(f"Account ID: {account_id} (Type: {type(account_id)})")
+        print(f"Category ID: {category_id} (Type: {type(category_id)})")
+        print(f"SubCategory ID: {subcategory_id} (Type: {type(subcategory_id)})")
+        print(f"-----------------------------------------")
+
+        # Corrected call with named arguments and Decimal value
+        new_rowid = self.db.add_transaction(
+            name=name,
+            description=description,
+            account_id=account_id,
+            value=float(value_decimal), # Convert Decimal to float for DB (REAL type)
+            type=type_str,
+            category_id=category_id,
+            sub_category_id=subcategory_id,
+            date_str=date_str
+        )
+
+        if new_rowid is not None:
+            # Instead of clearing, apply the defaults to reset the form
+            default_values.apply_to_form(self.form_widgets)
+            self._load_transactions();
+            # _load_categories() is called via timer in _ensure_category if needed
+            self._show_message('Transaction added!', error=False)
+
+            self.last_saved_undo_index = self.undo_stack.index()
+        else:
+            self._show_message('Failed to add transaction.', error=True)
+
+    def _cell_edited(self, row, col):
+        # This signal is emitted *after* the data in the model has changed.
+        # The Undo/Redo command system now handles updating the *underlying* data structures
+        # (self.transactions, self.pending) and the dirty/error state based on the command's redo/undo.
+
+        # Check if the account column was edited (col 2)
+        if col == 2:  # Account column
+            # Update the currency display for the transaction value
+            self._update_currency_display_for_row(row)
+
+        # Check if the category column was edited (col 4)
+        if col == 4:  # Category column
+            # Get the current row data
+            row_data = None
+            if row < len(self.transactions):
+                row_data = self.transactions[row]
+            elif row - len(self.transactions) < len(self.pending):
+                row_data = self.pending[row - len(self.transactions)]
+
+            # SPECIAL CASE: Handle the Bank of America vs UNCATEGORIZED conflict
+            if row_data and row_data.get('category_id') == 1:
+                # Force the display to show UNCATEGORIZED
+                item = self.tbl.item(row, col)
+                if item and item.text() != 'UNCATEGORIZED':
+                    debug_print('CATEGORY', f"_cell_edited: Forcing display of UNCATEGORIZED for category_id=1 in row {row}")
+                    item.setText('UNCATEGORIZED')
+                    row_data['category'] = 'UNCATEGORIZED'
+
+        # We need to ensure recoloring and button states are updated.
+        self._recolor_row(row)
+        self._update_button_states()
+
+        # Print the current table state to the terminal
+        self._debug_print_table()
+
+        # Validation for pending/dirty rows now happens primarily in _save_changes
+
+    def _update_currency_display_for_row(self, row):
+        """Update the currency display for a specific row when the account changes."""
+        # Get the account name from the table
+        account_item = self.tbl.item(row, 2)  # Column 2 is Account
+        if not account_item or not account_item.text():
+            return
+
+        account_text = account_item.text()
+
+        # Check if the account text is an ID instead of a name
+        try:
+            # If the text is a number, it might be an ID
+            account_id = int(account_text)
+            # Find the account name for this ID
+            account_name = None
+            for acc in self._accounts_data:
+                if acc['id'] == account_id:
+                    account_name = acc['name']
+                    # Update the account cell with the name instead of ID
+                    account_item.setText(account_name)
+                    break
+
+            if not account_name:
+                return
+        except (ValueError, TypeError):
+            # If it's not a number, assume it's already the account name
+            account_name = account_text
+            # Find the account_id for this account name
+            account_id = None
+            for acc in self._accounts_data:
+                if acc['name'] == account_name:
+                    account_id = acc['id']
+                    break
+
+        if not account_id:
+            return
+
+        # Get the currency for this account
+        currency_info = self.db.get_account_currency(account_id)
+        if not currency_info or 'currency_symbol' not in currency_info:
+            return
+
+        # Get the current value from the table
+        value_item = self.tbl.item(row, 1)  # Column 1 is Value
+        if not value_item:
+            return
+
+        # Get the current value as a Decimal
+        try:
+            # Try to extract just the numeric part from the display text
+            display_text = value_item.text()
+            # Remove any currency symbols or non-numeric characters except decimal point
+            numeric_text = ''.join(c for c in display_text if c.isdigit() or c == '.' or c == '-')
+            if not numeric_text:
+                numeric_text = "0.00"
+            value = Decimal(numeric_text)
+        except (InvalidOperation, ValueError):
+            value = Decimal("0.00")
+
+        # Format with the currency symbol
+        formatted_value = self.locale.toString(float(value), 'f', 2)
+        display_text = f"{currency_info['currency_symbol']} {formatted_value}"
+
+        # Update the table cell
+        value_item.setText(display_text)
+
+        # Also update the underlying data
+        num_transactions = len(self.transactions)
+        if row < num_transactions:
+            self.transactions[row]['account'] = account_name
+            self.transactions[row]['account_id'] = account_id
+        else:
+            pending_idx = row - num_transactions
+            if pending_idx < len(self.pending):
+                self.pending[pending_idx]['account'] = account_name
+                self.pending[pending_idx]['account_id'] = account_id
+
+    def _add_blank_row(self, focus_col=0):
+        # --- Initialize Base Structure --- #
+        # Start with a completely blank structure matching DB fields
+        new_row_data = {
+            'transaction_name': '',
+            'transaction_value': Decimal('0.00'),
+            'transaction_type': 'Expense', # A sensible baseline
+            'account_id': None,
+            'category_id': None,
+            'sub_category_id': None,
+            'transaction_description': '',
+            'transaction_date': datetime.now().strftime('%Y-%m-%d'),
+            # Name fields will be populated after applying defaults or from DB lookups
+            'account': '',
+            'category': '',
+            'sub_category': ''
+        }
+
+        # --- Apply Defaults ---
+        new_row_data = default_values.apply_to_new_row(new_row_data)
+
+        # --- Populate Names based on IDs (after defaults applied) ---
+        # Account Name
+        if new_row_data.get('account_id') is not None:
+            for acc in self._accounts_data:
+                if acc['id'] == new_row_data['account_id']:
+                    new_row_data['account'] = acc['name']
+                    break
+        elif self._accounts_data: # If no default ID, use first account as fallback?
+             new_row_data['account_id'] = self._accounts_data[0]['id']
+             new_row_data['account'] = self._accounts_data[0]['name']
+
+        # Category Name (depends on Type)
+        current_type = new_row_data.get('transaction_type', 'Expense')
+        if new_row_data.get('category_id') is not None:
+            # SPECIAL CASE: Handle the Bank of America vs UNCATEGORIZED conflict
+            # If category_id is 1, ALWAYS set the category name to UNCATEGORIZED
+            if new_row_data['category_id'] == 1:
+                new_row_data['category'] = 'UNCATEGORIZED'
+                debug_print('CATEGORY', f"_add_blank_row: Forcing category name to UNCATEGORIZED for category_id=1")
+            else:
+                for cat in self._categories_data:
+                    if cat['id'] == new_row_data['category_id'] and cat['type'] == current_type:
+                        new_row_data['category'] = cat['name']
+                        break
+            # If ID is invalid for type, try finding UNCATEGORIZED for the type
+            if not new_row_data.get('category'):
+                 for cat in self._categories_data:
+                      if cat['name'] == 'UNCATEGORIZED' and cat['type'] == current_type:
+                           new_row_data['category_id'] = cat['id']
+                           new_row_data['category'] = cat['name']
+                           break
+
+        # Subcategory Name (depends on Category)
+        current_cat_id = new_row_data.get('category_id')
+        if current_cat_id is not None and new_row_data.get('sub_category_id') is not None:
+            for subcat in self._subcategories_data:
+                if subcat['id'] == new_row_data['sub_category_id'] and subcat['category_id'] == current_cat_id:
+                    new_row_data['sub_category'] = subcat['name']
+                    break
+            # If ID is invalid for category, try finding UNCATEGORIZED for the category
+            if not new_row_data['sub_category']:
+                 for subcat in self._subcategories_data:
+                      if subcat['name'] == 'UNCATEGORIZED' and subcat['category_id'] == current_cat_id:
+                           new_row_data['sub_category_id'] = subcat['id']
+                           new_row_data['sub_category'] = subcat['name']
+                           break
+
+        # --- Final Checks & Add to Pending ---
+        # Ensure essential fields have fallbacks if defaults didn't provide them
+        if new_row_data.get('account_id') is None:
+             if self._accounts_data:
+                 new_row_data['account_id'] = self._accounts_data[0]['id']
+                 new_row_data['account'] = self._accounts_data[0]['name']
+             else:
+                 self._show_message("Cannot add row: No accounts available.", error=True); return
+
+        if new_row_data.get('category_id') is None:
+             # Find or create UNCATEGORIZED for the current type
+             cat_type = new_row_data.get('transaction_type', 'Expense')
+             uncat_id = self.db.ensure_category('UNCATEGORIZED', cat_type)
+             if uncat_id:
+                 new_row_data['category_id'] = uncat_id
+                 new_row_data['category'] = 'UNCATEGORIZED'
+                 QTimer.singleShot(0, self._load_dropdown_data) # Reload if created
+             else:
+                 self._show_message("Cannot add row: Failed to set default category.", error=True); return
+
+        if new_row_data.get('sub_category_id') is None and new_row_data.get('category_id') is not None:
+             # Find or create UNCATEGORIZED for the current category
+             cat_id = new_row_data['category_id']
+             subcat_id = self.db.ensure_subcategory('UNCATEGORIZED', cat_id)
+             if subcat_id:
+                 new_row_data['sub_category_id'] = subcat_id
+                 new_row_data['sub_category'] = 'UNCATEGORIZED'
+                 QTimer.singleShot(0, self._load_dropdown_data) # Reload if created
+             else:
+                 # Don't fail row add, validation will catch it if required
+                 pass
+
+
+        self.pending.append(new_row_data)
+        self._refresh()
+
+        new_row_index = len(self.transactions) + len(self.pending) - 1
+        if new_row_index >= 0 and focus_col >= 0: # Only focus if focus_col is valid
+            # Ensure the new row is visible and selected
+            self.tbl.scrollToItem(self.tbl.item(new_row_index, 0), QAbstractItemView.ScrollHint.EnsureVisible)
+            self.tbl.setCurrentCell(new_row_index, focus_col)
+
+        # Print the table contents to the terminal
+        self._debug_print_table()
+
+    def _recolor_row(self, row):
+        if row < 0 or row >= self.tbl.rowCount(): return # Added bounds check
+        self.tbl.blockSignals(True) # Prevent cellChanged from firing during recoloring
+
+        color_text = QColor('#f3f3f3')
+        color_base_even = QColor('#23272e'); color_base_odd = QColor('#262b33')
+        color_pending = QColor('#2a3949'); color_dirty = QColor('#4a4a3a')
+        color_error = QColor('#a94442')
+        color_row_error_soft = QColor('#3c2224') # Darker red background
+        color_row_dirty_soft = QColor('#3a3a2c') # Darker yellow/brown background for dirty rows
+        color_row_pending_soft = QColor('#263038') # Darker blue background for pending rows
+        color_plus_row = QColor('#23272e')
+
+        num_transactions = len(self.transactions)
+        num_pending = len(self.pending)
+        empty_row_index = num_transactions + num_pending
+
+        row_has_error = row in self.errors and bool(self.errors[row])
+        row_is_dirty_or_pending = False
+        rowid = None
+        base_bg = color_base_even if row % 2 == 0 else color_base_odd
+        row_base_color = base_bg
+
+        if row < num_transactions: # Existing transaction row
+            rowid = self.transactions[row].get('rowid')
+            if rowid in self.dirty: row_is_dirty_or_pending = True
+            if row_has_error: row_base_color = color_row_error_soft
+            elif row_is_dirty_or_pending: row_base_color = color_row_dirty_soft
+            else: row_base_color = base_bg
+        elif row < empty_row_index: # Pending row
+            rowid = None # Pending rows don't have a rowid yet
+            row_is_dirty_or_pending = True # Pending rows are always considered "changed"
+            if row_has_error: row_base_color = color_row_error_soft
+            else: row_base_color = color_row_pending_soft
+        elif row == empty_row_index: # '+' row
+             row_base_color = color_plus_row
+        else:
+            self.tbl.blockSignals(False); return # Should not happen if rowCount is correct
+
+        field_errors = self.errors.get(row, {})
+        dirty_fields_set = self.dirty_fields.get(rowid, set()) if rowid else set()
+
+        for c, key in enumerate(self.COLS):
+            item = self.tbl.item(row, c)
+            if item:
+                cell_bg = row_base_color
+                # Apply error color only if the specific cell has an error
+                if key in field_errors: cell_bg = color_error
+                # Apply dirty color only if the specific cell is marked as dirty AND the row isn't errored
+                elif rowid and key in dirty_fields_set and not row_has_error: cell_bg = color_dirty
+
+                item.setBackground(cell_bg)
+                # Ensure foreground color is consistent across cells in the row
+                item.setForeground(color_text)
+                # Item flags are set during _refresh
+
+        self.tbl.blockSignals(False) # Re-enable signals
+
+    def _ensure_category(self, category):
+        if not category: return False
+        category = category.strip() # Ensure no leading/trailing whitespace
+        if not category: return False # Check again after stripping
+
+        try:
+            cur = self.db.conn.cursor()
+            cur.execute('SELECT id FROM categories WHERE category=?', (category,))
+            if not cur.fetchone():
+                cur.execute('INSERT INTO categories (category) VALUES (?)', (category,))
+                self.db.conn.commit()
+                self._show_message(f"Category '{category}' added.", error=False)
+                # Reload categories in the background to update the combobox options
+                QTimer.singleShot(0, self._load_categories)
+            return True
+        except sqlite3.Error as e:
+            # Avoid flooding messages for the same error
+            if not str(self._message.text()).startswith(f"DB Error ensuring category"):
+                 self._show_message(f"DB Error ensuring category '{category}': {e}", error=True)
+            self.db.conn.rollback()
+            return False
+
+    def _get_category_id(self, category):
+        if not category: return None
+        try:
+            cur = self.db.conn.cursor()
+            cur.execute('SELECT id FROM categories WHERE category=?', (category,))
+            result = cur.fetchone()
+            return result[0] if result else None
+        except sqlite3.Error as e:
+             if not str(self._message.text()).startswith(f"DB Error getting category ID"):
+                 self._show_message(f"DB Error getting category ID for '{category}': {e}", error=True)
+             return None
+
+    def _validate_row(self, row_data, row_index_visual):
+        """Validate data for a single row (pending or existing). Returns cleaned data dict or None if invalid."""
+        # print(f"--- DEBUG: Validating Row {row_index_visual} ---")
+        # print(f"  Incoming data: {row_data}")
+        errors = {}
+        cleaned_data = {k: v for k, v in row_data.items()}
+
+        # --- Get Type First (needed for category validation) ---
+        trans_type = str(cleaned_data.get('transaction_type', '')).strip()
+        if not trans_type or trans_type not in ('Income', 'Expense'):
+            # Set a default or raise error immediately? Let's mark error for now.
+            errors['transaction_type'] = 'Type must be Income or Expense.'
+            # Set trans_type to None or a default to prevent further dependent errors? Defaulting for now.
+            trans_type = 'Expense' # Default to allow category check to proceed somewhat
+        else:
+            cleaned_data['transaction_type'] = trans_type # Store cleaned type
+
+        # --- Amount Validation ---
+        amount_val = cleaned_data.get('transaction_value', '')
+        amount_str = str(amount_val).strip()
+        if not amount_str:
+            errors['transaction_value'] = 'Amount is required.'
+        else:
+            try:
+                # Convert to Decimal, cleaning up locale chars first
+                cleaned_amount_str = amount_str.replace(self.locale.groupSeparator(),'').replace(self.locale.currencySymbol(),'')
+                amount_decimal = Decimal(cleaned_amount_str)
+                # Optional: Round to 2 decimal places upon validation if desired
+                # amount_decimal = amount_decimal.quantize(Decimal("0.01"))
+                cleaned_data['transaction_value'] = amount_decimal # Store Decimal
+            except InvalidOperation:
+                 errors['transaction_value'] = 'Invalid amount format.'
+
+        # --- Account Validation ---
+        account_id = cleaned_data.get('account_id')
+        account_name = str(cleaned_data.get('account','')).strip()
+        valid_account_id = None
+        if account_id is not None:
+            if any(acc['id'] == account_id for acc in self._accounts_data):
+                valid_account_id = account_id
+                # Update name if needed
+                for acc in self._accounts_data:
+                    if acc['id'] == account_id:
+                        cleaned_data['account'] = acc['name']
+                        break
+            else:
+                errors['account'] = f'Invalid Account ID: {account_id}'
+        elif account_name:
+            found = False
+            for acc in self._accounts_data:
+                if acc['name'] == account_name:
+                    valid_account_id = acc['id']
+                    cleaned_data['account_id'] = valid_account_id
+                    found = True
+                    break
+            if not found:
+                errors['account'] = f'Account Name not found: {account_name}'
+        else:
+            errors['account'] = 'Account is required.'
+        # Always set transaction_account if valid
+        if valid_account_id is not None:
+            cleaned_data['transaction_account'] = valid_account_id
+        # print(f"    > Account Result: ID={valid_account_id}, Error: {errors.get('account')}")
+
+        # --- Category Validation ---
+        category_id = cleaned_data.get('category_id')
+        category_name = str(cleaned_data.get('category','')).strip()
+        valid_category_id = None # Reset for category check
+        if 'transaction_type' not in errors:
+            if category_id is not None:
+                category_valid_for_type = False
+                for cat in self._categories_data:
+                    if cat['id'] == category_id and cat['type'] == trans_type:
+                        valid_category_id = category_id
+                        category_valid_for_type = True
+                        if category_name and cat['name'] != category_name:
+                            print(f"    Warning: Category name '{category_name}' mismatch for ID {category_id}. Updating name.")
+                            cleaned_data['category'] = cat['name']
+                        break
+                if not category_valid_for_type:
+                    errors['category'] = f'Invalid Category ID {category_id} for type {trans_type}.'
+            elif category_name:
+                found = False
+                for cat in self._categories_data:
+                    if cat['name'] == category_name and cat['type'] == trans_type:
+                        valid_category_id = cat['id']
+                        cleaned_data['category_id'] = valid_category_id
+                        found = True
+                        break
+                if not found:
+                    errors['category'] = f'Category Name \'{category_name}\' not found for type {trans_type}.'
+            else:
+                errors['category'] = 'Category is required.'
+            # Always set transaction_category if valid
+            if valid_category_id is not None:
+                cleaned_data['transaction_category'] = valid_category_id
+        else:
+            errors['category'] = 'Category cannot be validated (Type error).'
+        # print(f"    > Category Result: ID={valid_category_id}, Error: {errors.get('category')}")
+
+        # --- Subcategory Validation (Refined Logic) ---
+        subcategory_id = cleaned_data.get('sub_category_id')
+        subcategory_name = str(cleaned_data.get('sub_category','')).strip()
+        valid_subcategory_id = None # Reset for subcategory check
+        parent_category_error = 'category' in errors
+
+        if not parent_category_error and valid_category_id is not None:
+            if subcategory_id is not None:
+                # If ID provided, validate it against parent category ID
+                subcategory_valid = False
+                for subcat in self._subcategories_data:
+                    if subcat['id'] == subcategory_id and subcat['category_id'] == valid_category_id:
+                        valid_subcategory_id = subcategory_id
+                        subcategory_valid = True
+                        if subcategory_name and subcat['name'] != subcategory_name:
+                             print(f"    Warning: SubCat name '{subcategory_name}' mismatch for ID {subcategory_id}. Updating name.")
+                             cleaned_data['sub_category'] = subcat['name']
+                        break
+                if not subcategory_valid:
+                    errors['sub_category'] = f'Invalid SubCat ID {subcategory_id} for Category ID {valid_category_id}.'
+            elif subcategory_name and subcategory_name != "No Subcategories (Select Cat)": # ADDED Check for placeholder
+                # If name provided (and not placeholder), find ID based on name and valid parent category ID
+                found = False
+                for subcat in self._subcategories_data:
+                     if subcat['name'] == subcategory_name and subcat['category_id'] == valid_category_id:
+                         valid_subcategory_id = subcat['id']
+                         cleaned_data['sub_category_id'] = valid_subcategory_id
+                         found = True; break
+                # Special case: if name provided is exactly 'UNCATEGORIZED', ensure it exists
+                if not found and subcategory_name == 'UNCATEGORIZED':
+                     ensured_id = self.db.ensure_subcategory('UNCATEGORIZED', valid_category_id)
+                     if ensured_id:
+                          valid_subcategory_id = ensured_id
+                          cleaned_data['sub_category_id'] = valid_subcategory_id
+                          found = True
+                          QTimer.singleShot(0, self._load_dropdown_data)
+                     else:
+                          errors['sub_category'] = 'Could not find/create UNCATEGORIZED SubCat.'
+                elif not found:
+                     # Name provided doesn't match any existing subcategory for this parent category
+                     errors['sub_category'] = f'SubCat Name \'{subcategory_name}\' not found for Category ID {valid_category_id}.'
+            else: # subcategory_id is None AND (subcategory_name is empty OR is placeholder)
+                # Check if the parent category allows defaulting (i.e., is itself UNCATEGORIZED)
+                parent_cat_is_uncategorized = False
+                for cat in self._categories_data:
+                    if cat['id'] == valid_category_id and cat['name'] == 'UNCATEGORIZED':
+                        parent_cat_is_uncategorized = True; break
+
+                if parent_cat_is_uncategorized:
+                     # If parent is UNCATEGORIZED, default subcategory to UNCATEGORIZED
+                     ensured_id = self.db.ensure_subcategory('UNCATEGORIZED', valid_category_id)
+                     if ensured_id:
+                         valid_subcategory_id = ensured_id
+                         cleaned_data['sub_category_id'] = valid_subcategory_id
+                         cleaned_data['sub_category'] = 'UNCATEGORIZED' # Set name too
+                         QTimer.singleShot(0, self._load_dropdown_data)
+                     else:
+                         errors['sub_category'] = 'Could not default to UNCATEGORIZED subcategory.'
+                else:
+                    # Check if this category has any subcategories at all
+                    has_subcategories = False
+                    for subcat in self._subcategories_data:
+                        if subcat['category_id'] == valid_category_id:
+                            has_subcategories = True
+                            break
+
+                    if has_subcategories:
+                        # Only require subcategory if the category has subcategories
+                        errors['sub_category'] = 'Subcategory is required for this category.'
+                    else:
+                        # If category has no subcategories, create an UNCATEGORIZED one
+                        print(f"Category {valid_category_id} has no subcategories, creating UNCATEGORIZED")
+                        ensured_id = self.db.ensure_subcategory('UNCATEGORIZED', valid_category_id)
+                        if ensured_id:
+                            valid_subcategory_id = ensured_id
+                            cleaned_data['sub_category_id'] = valid_subcategory_id
+                            cleaned_data['sub_category'] = 'UNCATEGORIZED'
+                            QTimer.singleShot(0, self._load_dropdown_data)
+                        else:
+                            errors['sub_category'] = 'Could not create UNCATEGORIZED subcategory.'
+
+        elif not parent_category_error and valid_category_id is None:
+             # This case should not happen if category validation logic is correct
+             errors['sub_category'] = 'Subcategory cannot be validated (Category missing/invalid).'
+        elif parent_category_error:
+             # Parent category had an error, so subcategory is also invalid
+             errors['sub_category'] = 'Subcategory invalid (due to Category error).'
+        # print(f"    > SubCategory Result: ID={valid_subcategory_id}, Error: {errors.get('sub_category')}")
+
+        # --- Date Validation ---
+        date_str = str(cleaned_data.get('transaction_date', '')).strip()
+        if not date_str:
+            errors['transaction_date'] = 'Date is required.'
+        else:
+            # Check if the date is in the correct ISO format (YYYY-MM-DD)
+            try:
+                # First, try to parse as ISO format
+                if len(date_str) == 10 and date_str.count('-') == 2:
+                    year, month, day = date_str.split('-')
+                    if len(year) == 4 and len(month) == 2 and len(day) == 2:
+                        # Validate as a proper date
+                        datetime.strptime(date_str, '%Y-%m-%d')
+                        # If we get here, the date is valid ISO format
+                        cleaned_data['transaction_date'] = date_str
+                    else:
+                        raise ValueError("Date parts have incorrect lengths")
+                else:
+                    # Try to parse other common formats
+                    date_formats = [
+                        ('%d %b %Y', r'\d{1,2} [A-Za-z]{3} \d{4}'),  # "20 May 2025"
+                        ('%m/%d/%Y', r'\d{1,2}/\d{1,2}/\d{4}'),      # "05/20/2025"
+                        ('%d/%m/%Y', r'\d{1,2}/\d{1,2}/\d{4}')       # "20/05/2025"
+                    ]
+
+                    parsed_date = None
+                    for fmt, pattern in date_formats:
+                        if re.match(pattern, date_str):
+                            try:
+                                parsed_date = datetime.strptime(date_str, fmt)
+                                break
+                            except ValueError:
+                                continue
+
+                    if parsed_date:
+                        # Convert to ISO format
+                        cleaned_data['transaction_date'] = parsed_date.strftime('%Y-%m-%d')
+                    else:
+                        # If all formats fail, use current date
+                        errors['transaction_date'] = f'Invalid date format: {date_str}. Using current date.'
+                        cleaned_data['transaction_date'] = datetime.now().strftime('%Y-%m-%d')
+            except ValueError as e:
+                # If date parsing fails, use current date
+                errors['transaction_date'] = f'Invalid date: {e}. Using current date.'
+                cleaned_data['transaction_date'] = datetime.now().strftime('%Y-%m-%d')
+
+        # --- Name and Description Cleaning ---
+        # Clean transaction name and description (just strip whitespace)
+        name = str(cleaned_data.get('transaction_name', '')).strip()
+        description = str(cleaned_data.get('transaction_description', '')).strip()
+        cleaned_data['transaction_name'] = name
+        cleaned_data['transaction_description'] = description
+
+        # --- Set transaction_sub_category if valid_subcategory_id is set ---
+        if valid_subcategory_id is not None:
+            cleaned_data['transaction_sub_category'] = valid_subcategory_id
+
+        # --- Update error state --- #
+        if errors:
+            self.errors[row_index_visual] = errors
+            # print(f"  Validation Errors for row {row_index_visual}: {errors}")
+            return None
+        else:
+            if row_index_visual in self.errors:
+                del self.errors[row_index_visual]
+            # print(f"  Validation Success for row {row_index_visual}. Cleaned data: {cleaned_data}")
+            return cleaned_data
+
+
     def _save_changes(self):
         rows_with_errors_indices = set()
         error_details_for_msgbox = []
         db_error_occurred = False
         commit_successful = False
-        
-        # Initialize failed_dirty_fields here to avoid UnboundLocalError
-        failed_dirty_fields = {}
 
         inserts_to_execute = []
         pending_rows_that_passed_validation_indices = set()
@@ -800,7 +1787,7 @@ class ExpenseTrackerGUI(QMainWindow):
                  self.pending = [original_pending_copy[i] for i in pending_rows_that_failed_validation_indices]
                  # Keep only failed dirty rows/fields
                  self.dirty = dirty_rowids_that_failed_validation
-                 self.dirty_fields = failed_dirty_fields
+                 self.dirty_fields = dirty_fields_that_failed_validation
 
                  # Restore errors from the validation phase
                  self.errors = validation_errors.copy()
@@ -877,994 +1864,6 @@ class ExpenseTrackerGUI(QMainWindow):
         confirm_msg = f'Permanently delete {num_selected_valid} selected row(s)?\n(Includes pending and saved rows. This cannot be undone easily.)'
 
         if QMessageBox.question(self, 'Delete Rows', confirm_msg,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
-            return
-
-        # Separate indices into pending and saved
-        # Process pending indices carefully due to list shifting
-        pending_indices_to_delete_visual = sorted([r for r in rows_to_delete_indices if r >= num_transactions], reverse=True)
-        saved_rowids_to_delete = [self.transactions[r]['rowid'] for r in rows_to_delete_indices
-                                 if r < num_transactions and 'rowid' in self.transactions[r]]
-
-        pending_rows_deleted_count = 0
-        # Delete pending rows from the list (reversing ensures indices remain valid)
-        for visual_row_index in pending_indices_to_delete_visual:
-            pending_index = visual_row_index - num_transactions
-            if 0 <= pending_index < len(self.pending):
-                # Remove associated errors as well
-                if visual_row_index in self.errors:
-                     del self.errors[visual_row_index]
-                del self.pending[pending_index]
-                pending_rows_deleted_count += 1
-
-        saved_rows_deleted_count = 0
-        # Delete saved rows from the database
-        if saved_rowids_to_delete:
-            try:
-                self.db.conn.execute('BEGIN')
-                placeholders = ','.join('?' * len(saved_rowids_to_delete))
-                cursor = self.db.conn.execute(f'DELETE FROM transactions WHERE rowid IN ({placeholders})', saved_rowids_to_delete)
-                saved_rows_deleted_count = cursor.rowcount
-                self.db.conn.commit()
-
-                # Update dirty/cache tracking immediately
-                self.dirty.difference_update(saved_rowids_to_delete)
-                for rowid in saved_rowids_to_delete:
-                    self.dirty_fields.pop(rowid, None)
-                    self._original_data_cache.pop(rowid, None)
-                    # Remove errors associated with deleted saved rows
-                    for visual_idx, exp_data in enumerate(self.transactions):
-                        if exp_data.get('rowid') == rowid:
-                            if visual_idx in self.errors:
-                                del self.errors[visual_idx]
-                            break # Found the row
-
-                # Reload transactions and refresh the table completely
-                self._load_transactions() # This implicitly handles refresh
-                self._show_message(f"Deleted {pending_rows_deleted_count} pending and {saved_rows_deleted_count} saved row(s).", error=False)
-                # Clear undo stack after destructive action not managed by commands
-                self.undo_stack.clear()
-                self.last_saved_undo_index = 0
-                return # Exit as _load_transactions already refreshed
-
-            except sqlite3.Error as e:
-                self.db.conn.rollback()
-                self._show_message(f"DB Error deleting saved rows: {e}", error=True)
-                # Don't reload if DB delete failed, just refresh current state
-                self._refresh()
-
-        # If only pending rows were deleted (or DB delete failed), refresh
-        elif pending_rows_deleted_count > 0:
-             self._refresh()
-             self._show_message(f"Deleted {pending_rows_deleted_count} pending row(s).", error=False)
-
-
-        self.selected_rows.clear() # Clear selection after deletion attempt
-        self._update_button_states() # Update button states
-
-
-    def _clear_pending(self):
-        if not self.pending:
-            self._show_message("No new (pending) rows to clear", error=False)
-            return
-
-        reply = QMessageBox.question(self, 'Clear New Rows',
-                                     'Are you sure you want to clear all newly added (unsaved) rows?',
-                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                                     QMessageBox.StandardButton.No)
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-
-        # Clear errors associated with pending rows
-        num_transactions = len(self.transactions)
-        pending_visual_indices = range(num_transactions, num_transactions + len(self.pending))
-        for idx in pending_visual_indices:
-             if idx in self.errors:
-                 del self.errors[idx]
-
-        self.pending.clear()
-        self._refresh()
-        self._show_message("Cleared new (pending) rows", error=False)
-        # Clearing pending rows might affect undo stack if they were result of commands
-        # Consider clearing undo stack or managing it more carefully if needed
-
-
-    def resizeEvent(self,e):
-        super().resizeEvent(e)
-        QTimer.singleShot(0, self._place_fab)
-        QTimer.singleShot(0, self._update_column_widths)
-
-    def _update_column_widths(self, logical_index=None, old_size=None, new_size=None):
-        """Update column widths based on configuration percentages."""
-        # This method is called when the table is resized or when a column is manually resized
-
-        # If this was triggered by a manual column resize, we don't want to override it
-        if logical_index is not None and old_size is not None and new_size is not None:
-            return
-
-        # Get the total width of the table
-        total_width = self.tbl.viewport().width()
-        if total_width <= 0:
-            return  # Table not visible yet
-
-        # Calculate and set widths based on configuration
-        for col_idx, col_field in enumerate(self.COLS):
-            col_config = get_column_config(col_field)
-            if col_config and col_config.width_percent > 0:
-                # Calculate width based on percentage
-                width = int(total_width * col_config.width_percent / 100)
-                self.tbl.setColumnWidth(col_idx, width)
-
-    def _place_fab(self):
-        # Adjust FAB position relative to the table viewport
-        if hasattr(self.tbl, 'viewport') and self.tbl.viewport().width() > 0 and self.tbl.viewport().height() > 0 and self.tbl.isVisible():
-            try:
-                viewport_rect = self.tbl.viewport().geometry()
-                # Map viewport's bottom right corner to main window coordinates
-                # Map to parent (table) first, then map table coordinate to main window
-                table_relative_point = self.tbl.viewport().mapToParent(viewport_rect.bottomRight())
-                main_window_point = self.tbl.mapTo(self, table_relative_point)
-
-                fab_x = main_window_point.x() - self.fab.width() - 15
-                fab_y = main_window_point.y() - self.fab.height() - 15
-
-                # Ensure FAB stays within the main window bounds
-                fab_x = max(10, min(fab_x, self.width() - self.fab.width() - 10)) # Add padding
-                fab_y = max(10, min(fab_y, self.height() - self.fab.height() - 10)) # Add padding
-                self.fab.move(fab_x, fab_y)
-            except Exception as e:
-                debug_print('CLICK_DETECTION', f"Error placing FAB: {e}") # Catch potential errors during mapping
-
-
-    def _copy_selection(self):
-        selection = self.tbl.selectedRanges()
-        if not selection: return
-
-        # Determine the overall bounding box of the selection
-        min_row, max_row = self.tbl.rowCount(), -1
-        min_col, max_col = self.tbl.columnCount(), -1
-
-        for r in selection:
-            min_row = min(min_row, r.topRow())
-            max_row = max(max_row, r.bottomRow())
-            min_col = min(min_col, r.leftColumn())
-            max_col = max(max_col, r.rightColumn())
-
-        if min_row > max_row or min_col > max_col: return
-
-        empty_row_index = len(self.transactions) + len(self.pending)
-        # Exclude the '+' row from copy
-        max_row = min(max_row, empty_row_index - 1)
-        if min_row > max_row: return # If only '+' row was selected or selection invalid
-
-        output = []
-        for r in range(min_row, max_row + 1):
-            row_data = []
-            for c in range(min_col, max_col + 1):
-                # Check if this specific cell is within any of the selected ranges
-                cell_is_selected = any(
-                    sel_range.topRow() <= r <= sel_range.bottomRow() and
-                    sel_range.leftColumn() <= c <= sel_range.rightColumn()
-                    for sel_range in selection
-                )
-
-                if cell_is_selected:
-                    item = self.tbl.item(r, c)
-                    # Get the display text for copied data (what user sees)
-                    display_text = item.text() if item else ""
-                    # Replace newline characters to prevent breaking TSV structure
-                    display_text = display_text.replace('\n', ' ').replace('\t', ' ')
-                    row_data.append(display_text)
-                else:
-                     # For cells within the bounding box but not explicitly selected, add empty string
-                     row_data.append("")
-            output.append("\t".join(row_data))
-
-        if output:
-             QGuiApplication.clipboard().setText("\n".join(output))
-             rows_copied = max_row - min_row + 1
-             self._show_message(f"Copied {rows_copied} row(s) to clipboard.", error=False)
-
-    def _paste(self):
-        clip_text = QGuiApplication.clipboard().text()
-        if not clip_text:
-             self._show_message("Clipboard is empty.", error=False) # Not really an error
-             return
-
-        lines = clip_text.splitlines()
-        if not lines: return # No lines after split
-
-        current_index = self.tbl.currentIndex()
-        if not current_index.isValid():
-             self._show_message("Please select a starting cell for paste.", error=True)
-             return
-
-        start_row = current_index.row()
-        start_col = current_index.column()
-        num_clip_rows = len(lines)
-        num_clip_cols = max(len(line.split('\t')) for line in lines) if lines else 0
-
-        empty_row_idx = len(self.transactions) + len(self.pending)
-        max_target_row = start_row + num_clip_rows - 1
-
-        # --- Handle pasting into/past the '+' row ---
-        num_new_rows_needed = 0
-        if max_target_row >= empty_row_idx:
-            num_new_rows_needed = max_target_row - empty_row_idx + 1
-
-        if num_new_rows_needed > 0:
-             reply = QMessageBox.question(self, 'Paste - Add Rows',
-                                     f'Pasting requires adding {num_new_rows_needed} new row(s).\nContinue?',
-                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                                     QMessageBox.StandardButton.Yes)
-             if reply != QMessageBox.StandardButton.Yes:
-                 return
-
-             # Add blank rows first
-             for _ in range(num_new_rows_needed):
-                 # Don't focus during bulk add
-                 self._add_blank_row(focus_col=-1) # _add_blank_row calls _refresh
-
-             # Recalculate empty_row_idx after adding rows
-             empty_row_idx = len(self.transactions) + len(self.pending)
-
-        # --- Perform Paste Operation ---
-        self.tbl.blockSignals(True)
-        affected_rows_cols = set()
-        commands_to_push = []
-
-        try:
-            for r_offset, line in enumerate(lines):
-                target_row = start_row + r_offset
-                if target_row >= empty_row_idx: # Should not exceed if new rows were added
-                    print(f"Warning: Paste target row {target_row} exceeds available rows {empty_row_idx}")
-                    break # Safety break
-
-                fields = line.split('\t')
-                for c_offset, value_str in enumerate(fields):
-                    target_col = start_col + c_offset
-                    if target_col < len(self.COLS): # Ensure target column is valid
-                        col_key = self.COLS[target_col]
-
-                        # --- Get OLD value ---
-                        old_value = None
-                        num_transactions = len(self.transactions) # Recalculate in case rows were added
-                        is_pending = target_row >= num_transactions
-
-                        if is_pending:
-                            pending_index = target_row - num_transactions
-                            if 0 <= pending_index < len(self.pending):
-                                old_value = self.pending[pending_index].get(col_key, "")
-                        else:
-                            if 0 <= target_row < num_transactions:
-                                old_value = self.transactions[target_row].get(col_key, "")
-                        old_value_str = str(old_value) if old_value is not None else ""
-
-                        # --- Determine NEW value (basic type conversion attempt) ---
-                        new_value = value_str.strip() # Start with the string value
-                        try:
-                            if col_key == 'transaction_value':
-                                # Clean up the value string by removing currency symbols and formatting
-                                cleaned_value = new_value
-
-                                # Remove currency symbols and codes ($ MXN, $ USD, etc.)
-                                currency_patterns = [r'\$ [A-Z]{3}', r'\$[A-Z]{3}', r'\$']
-                                for pattern in currency_patterns:
-                                    cleaned_value = re.sub(pattern, '', cleaned_value)
-
-                                # Remove commas used as thousand separators
-                                cleaned_value = cleaned_value.replace(',', '')
-
-                                # Strip any remaining whitespace
-                                cleaned_value = cleaned_value.strip()
-
-                                debug_print('FOREIGN_KEYS', f"PASTE: Transaction value '{new_value}' cleaned to '{cleaned_value}'")
-
-                                # Try to convert to float
-                                amount_val, ok = self.locale.toFloat(cleaned_value)
-                                if ok:
-                                    new_value = amount_val
-                                    debug_print('FOREIGN_KEYS', f"PASTE: Converted transaction value '{cleaned_value}' to {amount_val}")
-                                else:
-                                    debug_print('FOREIGN_KEYS', f"PASTE: Failed to convert transaction value '{cleaned_value}' to float")
-                                    new_value = old_value # Revert if invalid amount format
-                            # Handle account column - convert account name to account_id
-                            elif col_key == 'account':
-                                # Check if the pasted value is an account name
-                                account_id = None
-                                for acc in self._accounts_data:
-                                    if acc['name'] == new_value:
-                                        account_id = acc['id']
-                                        break
-
-                                if account_id is not None:
-                                    # Use the account ID instead of the name
-                                    new_value = account_id
-                                    debug_print('FOREIGN_KEYS', f"PASTE: Converted account name '{value_str}' to ID {account_id}")
-                                else:
-                                    # If account name not found, keep original value
-                                    new_value = old_value
-                                    debug_print('FOREIGN_KEYS', f"PASTE: Account name '{value_str}' not found, keeping original value")
-                            # Handle category column - convert category name to category_id
-                            elif col_key == 'category':
-                                # Get the transaction type for context
-                                transaction_type = None
-                                if is_pending:
-                                    pending_index = target_row - num_transactions
-                                    if 0 <= pending_index < len(self.pending):
-                                        transaction_type = self.pending[pending_index].get('transaction_type', 'Expense')
-                                else:
-                                    if 0 <= target_row < num_transactions:
-                                        transaction_type = self.transactions[target_row].get('transaction_type', 'Expense')
-
-                                if not transaction_type:
-                                    transaction_type = 'Expense'  # Default
-
-                                # Find category ID for the given name and transaction type
-                                category_id = None
-                                for cat in self._categories_data:
-                                    if cat['name'] == new_value and cat['type'] == transaction_type:
-                                        category_id = cat['id']
-                                        break
-
-                                if category_id is not None:
-                                    # Use the category ID instead of the name
-                                    new_value = category_id
-                                    debug_print('FOREIGN_KEYS', f"PASTE: Converted category name '{value_str}' to ID {category_id}")
-                                else:
-                                    # If category name not found, keep original value
-                                    new_value = old_value
-                                    debug_print('FOREIGN_KEYS', f"PASTE: Category name '{value_str}' not found for type {transaction_type}, keeping original value")
-                            # Handle subcategory column - convert subcategory name to subcategory_id
-                            elif col_key == 'sub_category':
-                                # Get the category ID for context
-                                category_id = None
-                                if is_pending:
-                                    pending_index = target_row - num_transactions
-                                    if 0 <= pending_index < len(self.pending):
-                                        category_id = self.pending[pending_index].get('category_id')
-                                else:
-                                    if 0 <= target_row < num_transactions:
-                                        category_id = self.transactions[target_row].get('category_id')
-
-                                if category_id is not None:
-                                    # Find subcategory ID for the given name and category ID
-                                    subcategory_id = None
-                                    for subcat in self._subcategories_data:
-                                        if subcat['name'] == new_value and subcat['category_id'] == category_id:
-                                            subcategory_id = subcat['id']
-                                            break
-
-                                    if subcategory_id is not None:
-                                        # Use the subcategory ID instead of the name
-                                        new_value = subcategory_id
-                                        debug_print('FOREIGN_KEYS', f"PASTE: Converted subcategory name '{value_str}' to ID {subcategory_id}")
-                                    else:
-                                        # If subcategory name not found, keep original value
-                                        new_value = old_value
-                                        debug_print('FOREIGN_KEYS', f"PASTE: Subcategory name '{value_str}' not found for category ID {category_id}, keeping original value")
-                                else:
-                                    # If no category ID context, keep original value
-                                    new_value = old_value
-                                    debug_print('FOREIGN_KEYS', f"PASTE: No category ID context for subcategory '{value_str}', keeping original value")
-                            # No specific conversion needed for other columns,
-                            # rely on validation during save. Keep as string.
-                        except Exception as e:
-                            debug_print('FOREIGN_KEYS', f"PASTE: Error converting value: {e}")
-                            new_value = old_value # Revert on any conversion error
-
-                        new_value_str = str(new_value)
-
-                        # --- Create Command if value changed ---
-                        if new_value is not None and new_value_str != old_value_str:
-                            command = CellEditCommand(self, target_row, target_col, old_value, new_value)
-                            commands_to_push.append(command)
-                            affected_rows_cols.add((target_row, target_col))
-
-        finally:
-            self.tbl.blockSignals(False)
-
-        # --- Push Commands and Update UI ---
-        if commands_to_push:
-            self.undo_stack.beginMacro(f"Paste {len(commands_to_push)} cell(s)")
-            for cmd in commands_to_push:
-                self.undo_stack.push(cmd) # Pushing runs redo(), which updates data and UI
-            self.undo_stack.endMacro()
-
-            # Update currency display for any rows where account was changed
-            account_col_index = self.COLS.index('account') if 'account' in self.COLS else -1
-            if account_col_index >= 0:
-                for row, col in affected_rows_cols:
-                    if col == account_col_index:
-                        debug_print('CURRENCY', f"PASTE: Updating currency display for row {row} after account change")
-                        self._update_currency_display_for_row(row)
-
-            # Explicitly refresh the UI to ensure pasted data is visible
-            self._refresh()
-
-            self._show_message(f"Pasted data into {len(affected_rows_cols)} cell(s).", error=False)
-        else:
-             self._show_message("Paste operation did not change any cell values.", error=False)
-
-
-    def _show_message(self, msg, error=False):
-        color = '#ff5252' if error else '#81d4fa' # Red for error, blue for info
-        self._message.setText(msg)
-        self._message.setStyleSheet(f'color:{color}; font-weight:bold; padding:4px;')
-        # Clear the message after 5 seconds
-        QTimer.singleShot(5000, lambda: self._message.setText(''))
-
-    def _refresh(self):
-        """Refreshes the table display based on self.transactions and self.pending."""
-        self.tbl.blockSignals(True)
-        current_selection = self.tbl.selectedRanges() # Preserve selection if possible
-        current_v_scroll = self.tbl.verticalScrollBar().value() # Preserve scroll
-        current_h_scroll = self.tbl.horizontalScrollBar().value()
-
-        num_transactions = len(self.transactions)
-        num_pending = len(self.pending)
-        total_rows_required = num_transactions + num_pending + 1 # +1 for '+' row
-
-        # Adjust row count if necessary
-        if total_rows_required != self.tbl.rowCount():
-             self.tbl.setRowCount(total_rows_required)
-
-        font = QFont('Segoe UI', 11)
-        delegate = self.tbl.itemDelegate() # Get delegate for formatting
-
-        # Define colors directly (stylesheet might override parts)
-        color_text = QColor('#f3f3f3')
-        color_base_even = QColor('#23272e'); color_base_odd = QColor('#262b33')
-        color_error = QColor('#a94442')
-        color_dirty = QColor('#4a4a3a')
-        color_row_error_soft = QColor('#3c2224')
-        color_row_dirty_soft = QColor('#3a3a2c')
-        color_row_pending_soft = QColor('#263038')
-        color_plus_row = QColor('#23272e')
-
-        # --- Populate Rows ---
-        all_data = self.transactions + self.pending # Use self.transactions
-        for r, row_data in enumerate(all_data):
-            rowid = row_data.get('rowid') if r < num_transactions else None
-            is_pending = r >= num_transactions
-            row_has_error = r in self.errors and bool(self.errors[r])
-            row_is_dirty = rowid in self.dirty if rowid else False
-
-            # Ensure account_id is properly set for each row
-            if 'account' in row_data and isinstance(row_data['account'], str):
-                # Make sure account_id is an integer
-                if 'account_id' in row_data and row_data['account_id'] is not None:
-                    try:
-                        row_data['account_id'] = int(row_data['account_id'])
-                    except (ValueError, TypeError):
-                        # If account_id is not a valid integer, try to find it from account name
-                        row_data['account_id'] = None
-
-                # If account_id is still None or not set, try to find it from account name
-                if not row_data.get('account_id'):
-                    for acc in self._accounts_data:
-                        if acc['name'] == row_data['account']:
-                            row_data['account_id'] = acc['id']
-                            break
-
-            # Determine base row color
-            base_bg = color_base_even if r % 2 == 0 else color_base_odd
-            if row_has_error: row_base_color = color_row_error_soft
-            elif is_pending: row_base_color = color_row_pending_soft
-            elif row_is_dirty: row_base_color = color_row_dirty_soft
-            else: row_base_color = base_bg
-
-            field_errors = self.errors.get(r, {}) # Errors are keyed by visual row index
-            dirty_fields_set = self.dirty_fields.get(rowid, set()) if rowid else set()
-
-            # Use self.COLS for display columns
-            for c, key in enumerate(self.COLS):
-                # Get the value from row_data based on the key defined in self.COLS
-                # Handle potential missing keys gracefully, although _load_transactions should provide them
-                value = row_data.get(key, '')
-
-                # Special handling for account, category, and sub_category to ensure we display names, not IDs
-                if key == 'account' and isinstance(value, int):
-                    # If we have an account ID instead of a name, look up the name
-                    for acc in self._accounts_data:
-                        if acc['id'] == value:
-                            value = acc['name']
-                            break
-                elif key == 'category':
-                    # CRITICAL FIX: Handle ID conflicts using the mapping
-                    if row_data.get('category_id') in self._id_conflict_mapping.get('category', {}):
-                        forced_name = self._id_conflict_mapping['category'][row_data['category_id']]
-                        value = forced_name
-                        # Also update the underlying data to ensure consistency
-                        row_data['category'] = forced_name
-                        debug_print('CATEGORY', f"REFRESH FIX: Forcing display of {forced_name} for category_id={row_data['category_id']} in row {r} (is_pending={is_pending})")
-                    # If we have a category ID instead of a name, look up the name
-                    elif isinstance(value, int):
-                        for cat in self._categories_data:
-                            if cat['id'] == value:
-                                value = cat['name']
-                                # Update the underlying data to ensure consistency
-                                row_data['category'] = cat['name']
-                                break
-                    # If the value is a string but matches an account name, it's likely a mistake
-                    # This fixes the issue where bank account names appear in the category column
-                    elif isinstance(value, str):
-                        is_account_name = False
-                        for acc in self._accounts_data:
-                            if acc['name'] == value:
-                                is_account_name = True
-                                break
-
-                        # If it's an account name or if it's not a valid category name, set to UNCATEGORIZED
-                        if is_account_name or value not in [cat['name'] for cat in self._categories_data]:
-                            # Find UNCATEGORIZED category for the current transaction type
-                            transaction_type = row_data.get('transaction_type', 'Expense')
-                            uncategorized_cat = None
-                            for cat in self._categories_data:
-                                if cat['name'] == 'UNCATEGORIZED' and cat['type'] == transaction_type:
-                                    uncategorized_cat = cat
-                                    break
-
-                            if uncategorized_cat:
-                                value = 'UNCATEGORIZED'
-                                # Update the underlying data to fix the issue
-                                row_data['category'] = 'UNCATEGORIZED'
-                                row_data['category_id'] = uncategorized_cat['id']
-
-                                # Find or create UNCATEGORIZED subcategory for this category
-                                uncategorized_subcat = None
-                                for subcat in self._subcategories_data:
-                                    if subcat['category_id'] == uncategorized_cat['id'] and subcat['name'] == 'UNCATEGORIZED':
-                                        uncategorized_subcat = subcat
-                                        break
-
-                                if uncategorized_subcat:
-                                    row_data['sub_category'] = 'UNCATEGORIZED'
-                                    row_data['sub_category_id'] = uncategorized_subcat['id']
-                                else:
-                                    # Create UNCATEGORIZED subcategory if it doesn't exist
-                                    uncategorized_id = self.db.ensure_subcategory('UNCATEGORIZED', uncategorized_cat['id'])
-                                    if uncategorized_id:
-                                        row_data['sub_category'] = 'UNCATEGORIZED'
-                                        row_data['sub_category_id'] = uncategorized_id
-                                        # Reload dropdown data in the background
-                                        QTimer.singleShot(0, self._load_dropdown_data)
-                elif key == 'sub_category':
-                    # If we have a subcategory ID instead of a name, look up the name
-                    if isinstance(value, int):
-                        for subcat in self._subcategories_data:
-                            if subcat['id'] == value:
-                                value = subcat['name']
-                                break
-                    # If the subcategory is empty or invalid but we have a category, set to UNCATEGORIZED
-                    elif row_data.get('category_id') is not None:
-                        # Check if the current subcategory is valid for this category
-                        is_valid = False
-                        if value:
-                            for subcat in self._subcategories_data:
-                                if subcat['category_id'] == row_data.get('category_id') and subcat['name'] == value:
-                                    is_valid = True
-                                    row_data['sub_category_id'] = subcat['id']
-                                    break
-
-                        # If not valid or if category is UNCATEGORIZED, set subcategory to UNCATEGORIZED
-                        category_is_uncategorized = False
-                        for cat in self._categories_data:
-                            if cat['id'] == row_data.get('category_id') and cat['name'] == 'UNCATEGORIZED':
-                                category_is_uncategorized = True
-                                break
-
-                        if not is_valid or category_is_uncategorized:
-                            # Find or create UNCATEGORIZED subcategory for this category
-                            category_id = row_data.get('category_id')
-                            if category_id:
-                                uncategorized_found = False
-                                for subcat in self._subcategories_data:
-                                    if subcat['category_id'] == category_id and subcat['name'] == 'UNCATEGORIZED':
-                                        value = 'UNCATEGORIZED'
-                                        row_data['sub_category'] = 'UNCATEGORIZED'
-                                        row_data['sub_category_id'] = subcat['id']
-                                        uncategorized_found = True
-                                        debug_print('SUBCATEGORY', f"Fixed: Set subcategory to UNCATEGORIZED (ID: {subcat['id']})")
-                                        break
-
-                                # If not found, create it
-                                if not uncategorized_found and self.db:
-                                    debug_print('SUBCATEGORY', f"Creating UNCATEGORIZED subcategory for category ID {category_id}")
-                                    uncategorized_id = self.db.ensure_subcategory('UNCATEGORIZED', category_id)
-                                    if uncategorized_id:
-                                        value = 'UNCATEGORIZED'
-                                        row_data['sub_category'] = 'UNCATEGORIZED'
-                                        row_data['sub_category_id'] = uncategorized_id
-                                        debug_print('SUBCATEGORY', f"Created and set subcategory to UNCATEGORIZED (ID: {uncategorized_id})")
-                                        # Add to our local data
-                                        self._subcategories_data.append({
-                                            'id': uncategorized_id,
-                                            'name': 'UNCATEGORIZED',
-                                            'category_id': category_id
-                                        })
-                                        # Reload dropdown data in the background
-                                        QTimer.singleShot(0, self._load_dropdown_data)
-
-                item = self.tbl.item(r, c)
-                if item is None:
-                    item = QTableWidgetItem()
-                    self.tbl.setItem(r, c, item)
-
-                # Special handling for transaction_value to ensure correct currency
-                if key == 'transaction_value' and isinstance(value, Decimal):
-                    # Format with the correct currency based on the account
-                    account_name = row_data.get('account')
-                    account_id = row_data.get('account_id')
-
-                    # If we have an account name but no ID, try to find the ID
-                    if account_name and not account_id:
-                        for acc in self._accounts_data:
-                            if acc['name'] == account_name:
-                                account_id = acc['id']
-                                row_data['account_id'] = account_id
-                                break
-
-                    # Get the currency for this account
-                    if account_id:
-                        currency_info = self.db.get_account_currency(account_id)
-                        if currency_info and 'currency_symbol' in currency_info:
-                            # Format with the currency symbol
-                            formatted_value = self.locale.toString(float(value), 'f', 2)
-                            display_text = f"{currency_info['currency_symbol']} {formatted_value}"
-                        else:
-                            # Use delegate's displayText as fallback
-                            display_text = delegate.displayText(value, self.locale)
-                    else:
-                        # Use delegate's displayText as fallback
-                        display_text = delegate.displayText(value, self.locale)
-                else:
-                    # Use delegate's displayText for formatting (especially for numbers/dates)
-                    # The delegate itself will need updating later for new types like account/category
-                    display_text = delegate.displayText(value, self.locale) # Pass locale
-
-                # Special handling for category display
-                if key == 'category':
-                    # SPECIAL CASE: Direct fix for the Bank of America vs UNCATEGORIZED conflict
-                    # If display_text is "Bank of America" but we're trying to set UNCATEGORIZED
-                    if display_text == "Bank of America" and (value == "UNCATEGORIZED" or row_data.get('category') == "UNCATEGORIZED"):
-                        debug_print('CATEGORY', f"DIRECT FIX: Found 'Bank of America' in category field when it should be 'UNCATEGORIZED' for row {r}")
-
-                        # Force it to be UNCATEGORIZED
-                        display_text = 'UNCATEGORIZED'
-                        row_data['category'] = 'UNCATEGORIZED'
-
-                        # Find the correct UNCATEGORIZED category ID
-                        transaction_type = row_data.get('transaction_type', 'Expense')
-                        for cat in self._categories_data:
-                            if cat['name'] == 'UNCATEGORIZED' and cat['type'] == transaction_type:
-                                row_data['category_id'] = cat['id']
-                                break
-
-                        # Force immediate update of the display text for this cell
-                        item.setText('UNCATEGORIZED')
-
-                        # Also update the subcategory cell if it exists
-                        subcat_item = self.tbl.item(r, 5)  # Column 5 is subcategory
-                        if subcat_item:
-                            subcat_item.setText('UNCATEGORIZED')
-
-                    # First, check if the current display text is an account name (which would be wrong)
-                    # Do this check first before any other processing
-                    is_account_name = False
-                    for acc in self._accounts_data:
-                        if acc['name'] == display_text or acc['name'] == value:
-                            is_account_name = True
-                            debug_print('CATEGORY', f"Found account name '{display_text}' in category field for row {r}")
-                            break
-
-                    # If it's an account name, fix it immediately by setting to UNCATEGORIZED
-                    if is_account_name:
-                        transaction_type = row_data.get('transaction_type', 'Expense')
-                        for cat in self._categories_data:
-                            if cat['name'] == 'UNCATEGORIZED' and cat['type'] == transaction_type:
-                                display_text = 'UNCATEGORIZED'
-                                row_data['category'] = 'UNCATEGORIZED'
-                                row_data['category_id'] = cat['id']
-                                debug_print('CATEGORY', f"Fixed account name in category field to UNCATEGORIZED (ID: {cat['id']})")
-
-                                # Also update subcategory to match
-                                for subcat in self._subcategories_data:
-                                    if subcat['category_id'] == cat['id'] and subcat['name'] == 'UNCATEGORIZED':
-                                        row_data['sub_category'] = 'UNCATEGORIZED'
-                                        row_data['sub_category_id'] = subcat['id']
-                                        break
-
-                                # Force immediate update of the display text for this cell
-                                item.setText('UNCATEGORIZED')
-
-                                # Also update the subcategory cell if it exists
-                                subcat_item = self.tbl.item(r, 5)  # Column 5 is subcategory
-                                if subcat_item:
-                                    subcat_item.setText('UNCATEGORIZED')
-                                break
-                    # If not an account name, proceed with normal category handling
-                    else:
-                        # Check if we have a valid category_id
-                        if row_data.get('category_id'):
-                            # SPECIAL CASE: If category_id is 1, ALWAYS display as UNCATEGORIZED
-                            # This handles the specific ID conflict between Bank of America (ID 1) and UNCATEGORIZED (ID 1)
-                            if row_data.get('category_id') == 1:
-                                # Make sure we're displaying UNCATEGORIZED, not Bank of America
-                                display_text = 'UNCATEGORIZED'
-                                # Force immediate update of the display text for this cell
-                                item.setText('UNCATEGORIZED')
-                                # Also ensure the underlying data is consistent
-                                row_data['category'] = 'UNCATEGORIZED'
-                                debug_print('CATEGORY', f"CRITICAL FIX: Forced display of UNCATEGORIZED for category_id=1 in row {r}")
-
-                            # Check if the category_id matches an account_id (which would be wrong)
-                            is_account_id = False
-                            for acc in self._accounts_data:
-                                if acc['id'] == row_data.get('category_id'):
-                                    is_account_id = True
-                                    debug_print('CATEGORY', f"Found account ID {acc['id']} in category_id field for row {r}")
-                                    break
-
-                            # If it's an account ID, fix it by setting to UNCATEGORIZED
-                            if is_account_id:
-                                transaction_type = row_data.get('transaction_type', 'Expense')
-                                for cat in self._categories_data:
-                                    if cat['name'] == 'UNCATEGORIZED' and cat['type'] == transaction_type:
-                                        display_text = 'UNCATEGORIZED'
-                                        row_data['category'] = 'UNCATEGORIZED'
-                                        row_data['category_id'] = cat['id']
-                                        debug_print('CATEGORY', f"Fixed account ID in category_id field to UNCATEGORIZED (ID: {cat['id']})")
-
-                                        # Also update subcategory to match
-                                        for subcat in self._subcategories_data:
-                                            if subcat['category_id'] == cat['id'] and subcat['name'] == 'UNCATEGORIZED':
-                                                row_data['sub_category'] = 'UNCATEGORIZED'
-                                                row_data['sub_category_id'] = subcat['id']
-                                                break
-
-                                        # Force immediate update of the display text for this cell
-                                        item.setText('UNCATEGORIZED')
-
-                                        # Also update the subcategory cell if it exists
-                                        subcat_item = self.tbl.item(r, 5)  # Column 5 is subcategory
-                                        if subcat_item:
-                                            subcat_item.setText('UNCATEGORIZED')
-                                        break
-                            # If not an account ID, ensure we display the correct category name
-                            else:
-                                category_found = False
-                                for cat in self._categories_data:
-                                    if cat['id'] == row_data.get('category_id'):
-                                        display_text = cat['name']
-                                        category_found = True
-                                        # Also update the underlying data to ensure consistency
-                                        row_data['category'] = cat['name']
-                                        break
-
-                                # If category ID doesn't match any known category, set to UNCATEGORIZED
-                                if not category_found:
-                                    transaction_type = row_data.get('transaction_type', 'Expense')
-                                    for cat in self._categories_data:
-                                        if cat['name'] == 'UNCATEGORIZED' and cat['type'] == transaction_type:
-                                            display_text = 'UNCATEGORIZED'
-                                            row_data['category'] = 'UNCATEGORIZED'
-                                            row_data['category_id'] = cat['id']
-                                            debug_print('CATEGORY', f"Fixed invalid category ID {row_data.get('category_id')} to UNCATEGORIZED (ID: {cat['id']})")
-
-                                            # Force immediate update of the display text for this cell
-                                            item.setText('UNCATEGORIZED')
-
-                                            # Also update subcategory to match
-                                            for subcat in self._subcategories_data:
-                                                if subcat['category_id'] == cat['id'] and subcat['name'] == 'UNCATEGORIZED':
-                                                    row_data['sub_category'] = 'UNCATEGORIZED'
-                                                    row_data['sub_category_id'] = subcat['id']
-
-                                                    # Update the subcategory cell if it exists
-                                                    subcat_item = self.tbl.item(r, 5)  # Column 5 is subcategory
-                                                    if subcat_item:
-                                                        subcat_item.setText('UNCATEGORIZED')
-                                                    break
-                                            break
-
-                # Special handling for subcategory display
-                if key == 'sub_category':
-                    # Debug print to see what's happening with subcategory values
-                    debug_print('SUBCATEGORY', f"Row {r}, ID={row_data.get('sub_category_id')}, Value='{value}', Display='{display_text}'")
-
-                    # Ensure we display the correct subcategory name based on the ID
-                    if row_data.get('sub_category_id'):
-                        found = False
-                        for subcat in self._subcategories_data:
-                            if subcat['id'] == row_data.get('sub_category_id'):
-                                # Verify this subcategory belongs to the current category
-                                if subcat['category_id'] == row_data.get('category_id'):
-                                    display_text = subcat['name']
-                                    found = True
-
-                                    break
-                                else:
-                                    debug_print('SUBCATEGORY', f"WARNING: Subcategory ID {subcat['id']} belongs to category {subcat['category_id']}, not {row_data.get('category_id')}")
-
-                        if not found:
-                            # If we couldn't find the subcategory or it doesn't belong to the current category, force it to UNCATEGORIZED
-                            debug_print('SUBCATEGORY', f"WARNING: Valid subcategory ID {row_data.get('sub_category_id')} not found for category ID {row_data.get('category_id')}")
-                            # Find the correct UNCATEGORIZED subcategory for this category
-                            category_id = row_data.get('category_id')
-                            if category_id:
-                                uncategorized_found = False
-                                for subcat in self._subcategories_data:
-                                    if subcat['category_id'] == category_id and subcat['name'] == 'UNCATEGORIZED':
-                                        display_text = 'UNCATEGORIZED'
-                                        row_data['sub_category'] = 'UNCATEGORIZED'
-                                        row_data['sub_category_id'] = subcat['id']
-                                        uncategorized_found = True
-                                        debug_print('SUBCATEGORY', f"Fixed: Set subcategory to UNCATEGORIZED (ID: {subcat['id']})")
-                                        break
-
-                                # If we couldn't find an UNCATEGORIZED subcategory, create one
-                                if not uncategorized_found and self.db:
-                                    debug_print('SUBCATEGORY', f"Creating UNCATEGORIZED subcategory for category ID {category_id}")
-                                    uncategorized_id = self.db.ensure_subcategory('UNCATEGORIZED', category_id)
-                                    if uncategorized_id:
-                                        display_text = 'UNCATEGORIZED'
-                                        row_data['sub_category'] = 'UNCATEGORIZED'
-                                        row_data['sub_category_id'] = uncategorized_id
-                                        debug_print('SUBCATEGORY', f"Created and set subcategory to UNCATEGORIZED (ID: {uncategorized_id})")
-                                        # Add to our local data
-                                        self._subcategories_data.append({
-                                            'id': uncategorized_id,
-                                            'name': 'UNCATEGORIZED',
-                                            'category_id': category_id
-                                        })
-                                        # Reload dropdown data in the background
-                                        QTimer.singleShot(0, self._load_dropdown_data)
-
-                item.setText(display_text)
-
-                # Apply special styling for description field - smaller, grayer text
-                if key == 'transaction_description':
-                    description_font = QFont('Segoe UI', 10)  # Smaller font
-                    description_font.setItalic(True)  # Italic for less prominence
-                    item.setFont(description_font)
-                    item.setForeground(QColor('#a0a0a0'))  # Lighter gray color
-
-                    # No longer adding the [...] indicator since we have the Edit button
-                else:
-                    item.setFont(font)
-                    item.setForeground(color_text)
-
-                # Determine cell background color
-                cell_bg = row_base_color # Start with row base
-                # Highlight specific cells with errors
-                if key in field_errors: cell_bg = color_error
-                # Highlight specific dirty cells (only if no error on the cell)
-                elif rowid and key in dirty_fields_set and key not in field_errors: cell_bg = color_dirty
-
-                item.setBackground(cell_bg)
-                # Set flags (editable depends on column type - delegate will handle this better later)
-                item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEditable)
-
-        # --- Populate '+' Row ---
-        r_empty = num_transactions + num_pending
-        for c in range(len(self.COLS)):
-             item = self.tbl.item(r_empty, c)
-             if item is None:
-                 item = QTableWidgetItem()
-                 self.tbl.setItem(r_empty, c, item)
-             # Display '+' in the first column only (index 0)
-             item.setText('+' if c == 0 else '')
-             item.setFont(font)
-             item.setForeground(color_text)
-             item.setBackground(color_plus_row)
-             # Make '+' row selectable but not editable
-             item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-
-        # --- Restore UI State ---
-        self.tbl.blockSignals(False)
-        self.tbl.verticalScrollBar().setValue(current_v_scroll)
-        self.tbl.horizontalScrollBar().setValue(current_h_scroll)
-        # Restore selection (might be imperfect if rows were added/deleted)
-        self.tbl.clearSelection()
-        for sel_range in current_selection:
-             # Adjust range if it extends beyond new row count
-             top_row = sel_range.topRow()
-             bottom_row = min(sel_range.bottomRow(), total_rows_required - 1)
-             if bottom_row >= top_row:
-                 # Create a new selection range instead of modifying the existing one
-                 new_range = QTableWidgetSelectionRange(
-                     top_row,
-                     sel_range.leftColumn(),
-                     bottom_row,
-                     sel_range.rightColumn()
-                 )
-                 self.tbl.setRangeSelected(new_range, True)
-
-        self._update_button_states() # Update button states based on pending/dirty
-
-        # Print the table contents to the terminal
-        self._debug_print_table()
-
-    def _debug_print_table(self):
-        """Debug function to print the table contents to the terminal."""
-        # Only print table contents if TABLE_DISPLAY debug category is enabled
-        if debug_config.is_enabled('TABLE_DISPLAY'):
-            print("\n===== TABLE CONTENTS =====")
-            print(f"{'Row':<4} | {'Status':<12} | {'Transaction Name':<20} | {'Value':<15} | {'Account':<20} | {'Type':<10} | {'Category':<20} | {'Sub Category':<20}")
-            print("-" * 140)
-
-            num_transactions = len(self.transactions)
-            all_data = self.transactions + self.pending
-
-            for row in range(self.tbl.rowCount() - 1):  # Skip the '+' row
-                row_data = []
-                for col in range(self.tbl.columnCount()):
-                    item = self.tbl.item(row, col)
-                    text = item.text() if item else ""
-
-                    # Check if we need to convert an ID to a name for display
-                    if row < len(all_data) and col < len(self.COLS):
-                        col_key = self.COLS[col]
-                        # If the text looks like a numeric ID for category or subcategory
-                        if text.isdigit() and col_key in ['category', 'sub_category']:
-                            # For category, convert ID to name
-                            if col_key == 'category':
-                                category_id = int(text)
-                                for cat in self._categories_data:
-                                    if cat['id'] == category_id:
-                                        text = cat['name']
-                                        break
-
-                            # For subcategory, convert ID to name
-                            elif col_key == 'sub_category':
-                                subcategory_id = int(text)
-                                for subcat in self._subcategories_data:
-                                    if subcat['id'] == subcategory_id:
-                                        text = subcat['name']
-                                        break
-
-                    row_data.append(text)
-
-                # Determine row status with color indicators
-                status = ""
-                status_color = ""
-                if row < num_transactions:
-                    # This is a saved transaction
-                    transaction = self.transactions[row]
-                    rowid = transaction.get('rowid')
-
-                    # Check if this row is in the dirty set
-                    is_dirty = False
-                    if rowid in self.dirty:
-                        is_dirty = True
-                    # Also check if any field in the row is different from the original
-                    elif rowid in self._original_data_cache:
-                        original = self._original_data_cache.get(rowid, {})
-                        for key, value in transaction.items():
-                            if key.startswith('_') or key == 'rowid':
-                                continue
-                            if key in original and original[key] != value:
-                                is_dirty = True
-                                break
-
-                    if is_dirty:
-                        status = "[MODIFIED]"
-                        status_color = "\033[33m"  # Yellow for modified
-                    else:
-                        status = "[SAVED]"
-                        status_color = "\033[32m"  # Green for saved
-                else:
-                    # This is a pending (new) transaction
-                    status = "[NEW]"
-                    status_color = "\033[36m"  # Cyan for new
-
-                    # Check if it has validation errors
-                    pending_idx = row - num_transactions
-                    if pending_idx < len(self.pending):
-                        if self.pending[pending_idx].get('_has_error'):
-                            status = "[NEW/ERROR]"
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
@@ -3045,6 +3044,7 @@ class ExpenseTrackerGUI(QMainWindow):
                 old_value = None
                 num_transactions = len(self.transactions)
                 is_pending = row >= num_transactions
+
                 current_data_source = None
                 if is_pending:
                     pending_index = row - num_transactions
