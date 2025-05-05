@@ -26,6 +26,7 @@ class DebugConfig:
         'DROPDOWN': 'Dropdown selection',
         'FOREIGN_KEYS': 'Foreign key validation',
         'CLICK_DETECTION': 'Mouse click detection',
+        'TRANSACTION_EDIT': 'Transaction editing',
     }
 
     def __init__(self):
@@ -41,6 +42,7 @@ class DebugConfig:
             'DROPDOWN': False,
             'FOREIGN_KEYS': False,
             'CLICK_DETECTION': False,
+            'TRANSACTION_EDIT': True,   # Enable transaction edit debugging by default
         }
 
         # Initialize with defaults

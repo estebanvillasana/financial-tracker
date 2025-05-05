@@ -3,7 +3,7 @@
 import sys
 from PyQt6.QtWidgets import (QStyledItemDelegate, QComboBox, QLineEdit, QDateEdit,
                              QStyleOptionViewItem, QStyle, QWidget, QStyleOptionComboBox,
-                             QStylePainter)
+                             QStylePainter, QTextEdit)
 from PyQt6.QtCore import Qt, QModelIndex, QTimer, QDate, QLocale, QRect, QPoint
 from PyQt6.QtGui import QColor, QIcon, QPixmap, QPainter
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -252,8 +252,25 @@ class SpreadsheetDelegate(QStyledItemDelegate):
             editor.setStyleSheet(self.dropdown_style)
             QTimer.singleShot(0, editor.showPopup)
             return editor
-        elif col_key in ['transaction_name', 'transaction_description']:
-            return super().createEditor(parent, option, index)
+        elif col_key == 'transaction_name':
+            editor = QLineEdit(parent)
+            return editor
+        elif col_key == 'transaction_description':
+            # Create a single-line editor for descriptions
+            editor = QLineEdit(parent)
+            editor.setStyleSheet("""
+                QLineEdit {
+                    background-color: #2d323b;
+                    color: #f3f3f3;
+                    border: 1px solid #444;
+                    border-radius: 4px;
+                    padding: 6px;
+                }
+                QLineEdit:focus {
+                    border: 1.5px solid #4fc3f7;
+                }
+            """)
+            return editor
         else:
             print(f"No specific editor for column {col} (key: {col_key}), preventing edit.")
             return None
@@ -286,6 +303,7 @@ class SpreadsheetDelegate(QStyledItemDelegate):
             elif isinstance(editor, QComboBox):
                  if editor.view() and editor.view().isActiveWindow():
                      return False
+            # For QTextEdit, we want to commit data when focus is lost
             self.commitData.emit(editor)
             return False
         return super().eventFilter(editor, event)
@@ -329,6 +347,7 @@ class SpreadsheetDelegate(QStyledItemDelegate):
                 editor.setDate(value)
             else:
                 editor.setDate(QDate.currentDate())
+        # QTextEdit handling removed - now using QLineEdit for descriptions
         elif isinstance(editor, QLineEdit):
              if col_key == 'transaction_value':
                  amount_decimal = Decimal('0.00')
@@ -441,6 +460,7 @@ class SpreadsheetDelegate(QStyledItemDelegate):
             elif isinstance(editor, QDateEdit):
                 new_value_for_model = editor.date().toString("yyyy-MM-dd")
                 new_value_for_command = new_value_for_model
+            # QTextEdit handling removed - now using QLineEdit for descriptions
             elif isinstance(editor, QLineEdit):
                 text = editor.text()
                 if col_key == 'transaction_value':
@@ -586,8 +606,14 @@ class SpreadsheetDelegate(QStyledItemDelegate):
                  name = self._find_name_for_id('account', value)
                  return name if name else f"AccID:{value}"
             if is_category_id:
-                 # SPECIAL CASE: Handle the Bank of America vs UNCATEGORIZED conflict
-                 # If ID is 1, always return UNCATEGORIZED for category context
+                 # SPECIAL CASE: Handle ID conflicts using the parent window's mapping
+                 if self.parent_window and hasattr(self.parent_window, '_id_conflict_mapping'):
+                     if 'category' in self.parent_window._id_conflict_mapping and value in self.parent_window._id_conflict_mapping['category']:
+                         forced_name = self.parent_window._id_conflict_mapping['category'][value]
+                         debug_print('CATEGORY', f"DELEGATE FIX: Forcing display of {forced_name} for category_id={value}")
+                         return forced_name
+
+                 # Fallback for backward compatibility
                  if value == 1:
                      debug_print('CATEGORY', f"DELEGATE FIX: Forcing display of UNCATEGORIZED for category_id=1")
                      return 'UNCATEGORIZED'
@@ -607,8 +633,14 @@ class SpreadsheetDelegate(QStyledItemDelegate):
         """Helper to find name for ID within the delegate."""
         if item_id is None: return ""
         try:
-            # SPECIAL CASE: Handle the Bank of America vs UNCATEGORIZED conflict
-            # If we're looking for a category with ID 1, always return UNCATEGORIZED
+            # SPECIAL CASE: Handle ID conflicts using the parent window's mapping
+            if field_type == 'category' and self.parent_window and hasattr(self.parent_window, '_id_conflict_mapping'):
+                if 'category' in self.parent_window._id_conflict_mapping and item_id in self.parent_window._id_conflict_mapping['category']:
+                    forced_name = self.parent_window._id_conflict_mapping['category'][item_id]
+                    debug_print('CATEGORY', f"FIND_NAME_FOR_ID FIX: Forcing display of {forced_name} for category_id={item_id}")
+                    return forced_name
+
+            # Fallback for backward compatibility
             if field_type == 'category' and item_id == 1:
                 debug_print('CATEGORY', f"FIND_NAME_FOR_ID FIX: Forcing display of UNCATEGORIZED for category_id=1")
                 return 'UNCATEGORIZED'

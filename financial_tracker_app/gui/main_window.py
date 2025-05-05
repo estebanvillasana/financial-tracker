@@ -28,6 +28,8 @@ from financial_tracker_app.gui.custom_widgets import ArrowComboBox, ArrowDateEdi
 from financial_tracker_app.gui.custom_style import CustomProxyStyle
 from financial_tracker_app.logic.default_values import default_values
 from financial_tracker_app.gui.default_values_ui import show_default_values_dialog
+from financial_tracker_app.gui.description_dialog import show_description_dialog
+from financial_tracker_app.gui.transaction_details_dialog import show_transaction_details_dialog
 from financial_tracker_app.utils.debug_config import debug_config, debug_print
 from financial_tracker_app.utils.debug_control import show_debug_menu
 # Import field mapping utilities
@@ -215,7 +217,16 @@ class ExpenseTrackerGUI(QMainWindow):
         self.account_in = ArrowComboBox()
         self.cat_in = ArrowComboBox()
         self.subcat_in = ArrowComboBox()
+
+        # Create a single-line text field for description with a button to open dialog
         self.desc_in = QLineEdit(placeholderText='Description')
+
+        # Create a button to open the description dialog
+        self.desc_btn = QPushButton("...")
+        self.desc_btn.setToolTip("Edit description in multi-line editor")
+        self.desc_btn.setFixedWidth(30)
+        self.desc_btn.clicked.connect(self._open_description_dialog)
+
         self.date_in = ArrowDateEdit(parent=self)
         self.date_in.setDate(QDate.currentDate())
         self.date_in.setDisplayFormat("dd MMM yyyy")
@@ -245,7 +256,17 @@ class ExpenseTrackerGUI(QMainWindow):
         form_grid.addWidget(QLabel('Sub Category:'), 2, 2)
         form_grid.addWidget(self.subcat_in, 2, 3)
         form_grid.addWidget(QLabel('Description:'), 3, 0)
-        form_grid.addWidget(self.desc_in, 3, 1, 1, 3)
+
+        # Create a horizontal layout for description field and button
+        desc_layout = QHBoxLayout()
+        desc_layout.setContentsMargins(0, 0, 0, 0)
+        desc_layout.addWidget(self.desc_in, stretch=1)
+        desc_layout.addWidget(self.desc_btn)
+
+        # Add the layout to the form grid
+        desc_container = QWidget()
+        desc_container.setLayout(desc_layout)
+        form_grid.addWidget(desc_container, 3, 1, 1, 3)
         form_grid.addWidget(QLabel('Date:'), 4, 0)
         form_grid.addWidget(self.date_in, 4, 1)
 
@@ -266,6 +287,46 @@ class ExpenseTrackerGUI(QMainWindow):
 
         # --- Action Buttons ---
         btn_layout = QHBoxLayout()
+
+        # Create a group for data manipulation buttons (left side)
+        data_btn_layout = QHBoxLayout()
+        data_btn_layout.setSpacing(8)
+
+        # Edit Transaction button - first in the group for prominence
+        self.edit_btn = QPushButton('Edit Transaction')
+        self.edit_btn.setIcon(QIcon.fromTheme("document-properties", QIcon(":/icons/edit.png")))
+        self.edit_btn.setToolTip("Edit the selected transaction in a detailed form")
+        self.edit_btn.clicked.connect(self._edit_selected_transaction)
+        self.edit_btn.setEnabled(False)  # Disabled until a row is selected
+        data_btn_layout.addWidget(self.edit_btn)
+
+        # Delete Transaction button
+        self.del_btn = QPushButton('Delete')
+        self.del_btn.setIcon(QIcon.fromTheme("edit-delete", QIcon(":/icons/delete.png")))
+        self.del_btn.setToolTip("Delete selected row(s) from the database (Del)")
+        self.del_btn.clicked.connect(self._delete_rows)
+        data_btn_layout.addWidget(self.del_btn)
+
+        # Clear New Rows button
+        self.clear_btn = QPushButton('Clear New Rows')
+        self.clear_btn.setIcon(QIcon.fromTheme("edit-clear", QIcon(":/icons/clear.png")))
+        self.clear_btn.setToolTip("Clear newly added rows that haven't been saved yet.")
+        self.clear_btn.clicked.connect(self._clear_pending)
+        data_btn_layout.addWidget(self.clear_btn)
+
+        # Create a group for save/discard buttons (right side)
+        save_btn_layout = QHBoxLayout()
+        save_btn_layout.setSpacing(8)
+
+        # Discard Changes button
+        self.discard_btn = QPushButton('Discard Changes')
+        self.discard_btn.setIcon(QIcon.fromTheme("document-revert", QIcon(":/icons/revert.png")))
+        self.discard_btn.setToolTip("Discard all unsaved additions and modifications")
+        self.discard_btn.setEnabled(False)
+        self.discard_btn.clicked.connect(self._discard_changes)
+        save_btn_layout.addWidget(self.discard_btn)
+
+        # Save Changes button
         self.save_btn = QPushButton('Save Changes')
         self.save_btn.setIcon(QIcon.fromTheme("document-save", QIcon(":/icons/save.png")))
         self.save_btn.setToolTip("Save all pending additions and modifications (Ctrl+S)")
@@ -273,28 +334,12 @@ class ExpenseTrackerGUI(QMainWindow):
         self.save_btn.clicked.connect(self._save_changes)
         save_shortcut = QShortcut(QKeySequence.StandardKey.Save, self)
         save_shortcut.activated.connect(self._save_changes)
+        save_btn_layout.addWidget(self.save_btn)
 
-        self.discard_btn = QPushButton('Discard Changes')
-        self.discard_btn.setIcon(QIcon.fromTheme("document-revert", QIcon(":/icons/revert.png")))
-        self.discard_btn.setToolTip("Discard all unsaved additions and modifications")
-        self.discard_btn.setEnabled(False)
-        self.discard_btn.clicked.connect(self._discard_changes)
-
-        self.del_btn = QPushButton('Delete Selected')
-        self.del_btn.setIcon(QIcon.fromTheme("edit-delete", QIcon(":/icons/delete.png")))
-        self.del_btn.setToolTip("Delete selected row(s) from the database (Del)")
-        self.del_btn.clicked.connect(self._delete_rows)
-
-        self.clear_btn = QPushButton('Clear New Rows')
-        self.clear_btn.setIcon(QIcon.fromTheme("edit-clear", QIcon(":/icons/clear.png")))
-        self.clear_btn.setToolTip("Clear newly added rows that haven't been saved yet.")
-        self.clear_btn.clicked.connect(self._clear_pending)
-
+        # Add both groups to the main button layout
+        btn_layout.addLayout(data_btn_layout)
         btn_layout.addStretch(1)
-        btn_layout.addWidget(self.clear_btn)
-        btn_layout.addWidget(self.del_btn)
-        btn_layout.addWidget(self.discard_btn)
-        btn_layout.addWidget(self.save_btn)
+        btn_layout.addLayout(save_btn_layout)
         root.addLayout(btn_layout)
         # --- End Action Buttons ---
 
@@ -368,6 +413,154 @@ class ExpenseTrackerGUI(QMainWindow):
             default_values.apply_to_form(self.form_widgets)
             self._show_message("Default values updated.", error=False)
 
+    def _open_description_dialog(self):
+        """Open dialog for editing multi-line description in the form."""
+        current_text = self.desc_in.text()
+        new_text = show_description_dialog(self, current_text)
+
+        if new_text is not None:  # None means dialog was canceled
+            self.desc_in.setText(new_text)
+            self._show_message("Description updated.", error=False)
+
+    def _open_description_dialog_for_cell(self, row, col, current_text):
+        """Open dialog for editing multi-line description in a table cell."""
+        new_text = show_description_dialog(self, current_text)
+
+        if new_text is not None:  # None means dialog was canceled
+            # Update the cell text
+            item = self.tbl.item(row, col)
+            if item:
+                # Update the display text (no longer adding [...] indicator)
+                item.setText(new_text if new_text else "")
+
+                # Update the underlying data
+                if row < len(self.transactions):
+                    # Update existing transaction
+                    self.transactions[row]['transaction_description'] = new_text
+                    self.dirty.add(row)
+                    if row not in self.dirty_fields:
+                        self.dirty_fields[row] = set()
+                    self.dirty_fields[row].add('transaction_description')
+                elif row - len(self.transactions) < len(self.pending):
+                    # Update pending transaction
+                    pending_idx = row - len(self.transactions)
+                    self.pending[pending_idx]['transaction_description'] = new_text
+
+                self._update_button_states()
+                self._show_message("Description updated.", error=False)
+
+    def _edit_selected_transaction(self):
+        """Open dialog for editing the selected transaction."""
+        if not self.selected_rows or len(self.selected_rows) != 1:
+            self._show_message("Please select a single transaction to edit.", error=True)
+            return
+
+        # Get the selected row
+        row = list(self.selected_rows)[0]
+
+        # Call the transaction details dialog
+        self._open_transaction_details_dialog(row)
+
+    def _open_transaction_details_dialog(self, row):
+        """Open dialog for editing all transaction details."""
+        # Get the transaction data
+        transaction_data = None
+        if row < len(self.transactions):
+            transaction_data = self.transactions[row]
+        elif row - len(self.transactions) < len(self.pending):
+            pending_idx = row - len(self.transactions)
+            transaction_data = self.pending[pending_idx]
+
+        if not transaction_data:
+            self._show_message("No transaction data found.", error=True)
+            return
+
+        # Make a deep copy of the original data for comparison
+        import copy
+        original_data = copy.deepcopy(transaction_data)
+
+        # Show the transaction details dialog
+        updated_data = show_transaction_details_dialog(
+            self,
+            transaction_data,
+            self._accounts_data,
+            self._categories_data,
+            self._subcategories_data
+        )
+
+        if updated_data:  # None means dialog was canceled
+            # Update the transaction data
+            if row < len(self.transactions):
+                # Debug print the original and updated data
+                debug_print('TRANSACTION_EDIT', f"Original data: {original_data}")
+                debug_print('TRANSACTION_EDIT', f"Updated data: {updated_data}")
+
+                # Get the rowid for this transaction
+                rowid = updated_data.get('rowid')
+
+                if rowid is not None:
+                    # DIRECT SAVE: Save changes immediately to the database
+                    debug_print('TRANSACTION_EDIT', f"Directly saving changes for rowid {rowid} to database")
+
+                    try:
+                        # Prepare the update query
+                        self.db.conn.execute('''
+                            UPDATE transactions
+                            SET transaction_name=?,
+                                transaction_value=?,
+                                account_id=?,
+                                transaction_type=?,
+                                transaction_category=?,
+                                transaction_sub_category=?,
+                                transaction_description=?,
+                                transaction_date=?
+                            WHERE rowid=?
+                        ''', (
+                            updated_data['transaction_name'],
+                            float(updated_data['transaction_value']),
+                            updated_data['account_id'],
+                            updated_data['transaction_type'],
+                            updated_data['transaction_category'],
+                            updated_data['transaction_sub_category'],
+                            updated_data['transaction_description'],
+                            updated_data['transaction_date'],
+                            rowid
+                        ))
+
+                        # Commit the changes
+                        self.db.conn.commit()
+
+                        # Update the transaction data in memory
+                        self.transactions[row] = updated_data
+
+                        # Update the original data cache with the new data
+                        self._original_data_cache[rowid] = copy.deepcopy(updated_data)
+
+                        # Refresh the display
+                        self._refresh()
+                        self._update_button_states()
+                        self._show_message("Transaction updated and saved to database.", error=False)
+
+                    except Exception as e:
+                        # If there's an error, show it and don't update the UI
+                        debug_print('TRANSACTION_EDIT', f"Error saving transaction: {e}")
+                        self._show_message(f"Error saving transaction: {e}", error=True)
+
+                        # Roll back any changes
+                        if self.db.conn.in_transaction:
+                            self.db.conn.rollback()
+
+            elif row - len(self.transactions) < len(self.pending):
+                # For pending transactions, just update the data in memory
+                # These will be saved when the user clicks "Save Changes"
+                pending_idx = row - len(self.transactions)
+                self.pending[pending_idx] = updated_data
+
+                # Refresh the display
+                self._refresh()
+                self._update_button_states()
+                self._show_message("New transaction updated. Don't forget to save changes!", error=False)
+
     def _ensure_uncategorized_subcategories(self):
         """Ensure every category has an UNCATEGORIZED subcategory."""
         for category in self._categories_data:
@@ -399,16 +592,78 @@ class ExpenseTrackerGUI(QMainWindow):
         self._categories_data = []
         self._subcategories_data = []
 
+        # CRITICAL FIX: Create a mapping of ID conflicts
+        # This ensures that category ID 1 is always treated as UNCATEGORIZED, not Bank of America
+        self._id_conflict_mapping = {
+            'category': {
+                1: 'UNCATEGORIZED'  # Force category ID 1 to always be UNCATEGORIZED
+            },
+            'sub_category': {}  # Will be populated as subcategories are loaded
+        }
+
+        # Create a set to track IDs that have been seen to detect conflicts
+        self._seen_ids = {
+            'category': set(),
+            'sub_category': set()
+        }
+
         try:
             cur = self.db.conn.cursor()
             cur.execute("SELECT id, account FROM bank_accounts ORDER BY account")
             self._accounts_data = [{'id': row[0], 'name': row[1]} for row in cur.fetchall()]
 
+            # Load categories with ID conflict detection
             cur.execute("SELECT id, category, type FROM categories ORDER BY type, category")
-            self._categories_data = [{'id': row[0], 'name': row[1], 'type': row[2]} for row in cur.fetchall()]
+            for row in cur.fetchall():
+                category_id = row[0]
+                category_name = row[1]
+                category_type = row[2]
 
+                # Check for ID conflicts
+                if category_id in self._seen_ids['category']:
+                    debug_print('CATEGORY', f"WARNING: Detected duplicate category ID: {category_id} for '{category_name}'")
+                    # Add to conflict mapping if not already there
+                    if category_id not in self._id_conflict_mapping['category']:
+                        self._id_conflict_mapping['category'][category_id] = category_name
+                        debug_print('CATEGORY', f"Added conflict mapping for category ID {category_id}: '{category_name}'")
+                else:
+                    # Mark this ID as seen
+                    self._seen_ids['category'].add(category_id)
+
+                # Special case for ID 1 - always force to UNCATEGORIZED
+                if category_id == 1 and category_name != 'UNCATEGORIZED':
+                    debug_print('CATEGORY', f"WARNING: Category ID 1 is '{category_name}', forcing to 'UNCATEGORIZED'")
+                    # Keep the original name in the data structure but ensure it displays as UNCATEGORIZED
+
+                self._categories_data.append({
+                    'id': category_id,
+                    'name': category_name,
+                    'type': category_type
+                })
+
+            # Load subcategories with ID conflict detection
             cur.execute("SELECT id, sub_category, category_id FROM sub_categories ORDER BY category_id, sub_category")
-            self._subcategories_data = [{'id': row[0], 'name': row[1], 'category_id': row[2]} for row in cur.fetchall()]
+            for row in cur.fetchall():
+                subcategory_id = row[0]
+                subcategory_name = row[1]
+                category_id = row[2]
+
+                # Check for ID conflicts
+                if subcategory_id in self._seen_ids['sub_category']:
+                    debug_print('SUBCATEGORY', f"WARNING: Detected duplicate subcategory ID: {subcategory_id} for '{subcategory_name}'")
+                    # Add to conflict mapping if not already there
+                    if subcategory_id not in self._id_conflict_mapping['sub_category']:
+                        self._id_conflict_mapping['sub_category'][subcategory_id] = subcategory_name
+                        debug_print('SUBCATEGORY', f"Added conflict mapping for subcategory ID {subcategory_id}: '{subcategory_name}'")
+                else:
+                    # Mark this ID as seen
+                    self._seen_ids['sub_category'].add(subcategory_id)
+
+                self._subcategories_data.append({
+                    'id': subcategory_id,
+                    'name': subcategory_name,
+                    'category_id': category_id
+                })
 
             # Ensure every category has an UNCATEGORIZED subcategory
             self._ensure_uncategorized_subcategories()
@@ -455,9 +710,15 @@ class ExpenseTrackerGUI(QMainWindow):
         default_index = -1
         for i, cat in enumerate(self._categories_data):
             if cat['type'] == selected_type:
+                # Check if this category ID has a conflict mapping
+                display_name = cat['name']
+                if cat['id'] in self._id_conflict_mapping.get('category', {}):
+                    display_name = self._id_conflict_mapping['category'][cat['id']]
+                    debug_print('DROPDOWN', f"  Using conflict mapping for category ID {cat['id']}: '{display_name}' instead of '{cat['name']}'")
+
                 # Debug Print for category dropdown
-                debug_print('DROPDOWN', f"  Adding Cat item {self.cat_in.count()}: Name='{cat['name']}', ID={cat['id']} (Type: {type(cat['id'])})")
-                self.cat_in.addItem(cat['name'], userData=cat['id'])
+                debug_print('DROPDOWN', f"  Adding Cat item {self.cat_in.count()}: Name='{display_name}', ID={cat['id']} (Type: {type(cat['id'])})")
+                self.cat_in.addItem(display_name, userData=cat['id'])
                 # Verification Print
                 added_data = self.cat_in.itemData(self.cat_in.count() - 1)
                 debug_print('DROPDOWN', f"    > Verified itemData({self.cat_in.count() - 1}): {added_data} (Type: {type(added_data)})")
@@ -500,9 +761,15 @@ class ExpenseTrackerGUI(QMainWindow):
         if selected_category_id is not None:
             for i, subcat in enumerate(self._subcategories_data):
                 if subcat['category_id'] == selected_category_id:
+                    # Check if this subcategory ID has a conflict mapping
+                    display_name = subcat['name']
+                    if subcat['id'] in self._id_conflict_mapping.get('sub_category', {}):
+                        display_name = self._id_conflict_mapping['sub_category'][subcat['id']]
+                        debug_print('DROPDOWN', f"  Using conflict mapping for subcategory ID {subcat['id']}: '{display_name}' instead of '{subcat['name']}'")
+
                     # Debug Print for subcategory dropdown
-                    debug_print('DROPDOWN', f"  Adding SubCat item {self.subcat_in.count()}: Name='{subcat['name']}', ID={subcat['id']} (Type: {type(subcat['id'])})")
-                    self.subcat_in.addItem(subcat['name'], userData=subcat['id'])
+                    debug_print('DROPDOWN', f"  Adding SubCat item {self.subcat_in.count()}: Name='{display_name}', ID={subcat['id']} (Type: {type(subcat['id'])})")
+                    self.subcat_in.addItem(display_name, userData=subcat['id'])
                     # Verification Print
                     added_data = self.subcat_in.itemData(self.subcat_in.count() - 1)
                     debug_print('DROPDOWN', f"    > Verified itemData({self.subcat_in.count() - 1}): {added_data} (Type: {type(added_data)})")
@@ -630,6 +897,7 @@ class ExpenseTrackerGUI(QMainWindow):
         category_id = self.cat_in.itemData(category_idx) if category_idx >= 0 else None
         subcategory_id = self.subcat_in.itemData(subcategory_idx) if subcategory_idx >= 0 else None
 
+        # Get description from QLineEdit
         description = self.desc_in.text().strip()
         date_str = self.date_in.date().toString('yyyy-MM-dd')
 
@@ -2077,13 +2345,13 @@ class ExpenseTrackerGUI(QMainWindow):
                             value = acc['name']
                             break
                 elif key == 'category':
-                    # CRITICAL FIX: If category_id is 1, always display as UNCATEGORIZED
-                    # This handles the specific conflict between Bank of America (ID 1) and UNCATEGORIZED (ID 1)
-                    if row_data.get('category_id') == 1:
-                        value = 'UNCATEGORIZED'
+                    # CRITICAL FIX: Handle ID conflicts using the mapping
+                    if row_data.get('category_id') in self._id_conflict_mapping.get('category', {}):
+                        forced_name = self._id_conflict_mapping['category'][row_data['category_id']]
+                        value = forced_name
                         # Also update the underlying data to ensure consistency
-                        row_data['category'] = 'UNCATEGORIZED'
-                        debug_print('CATEGORY', f"REFRESH FIX: Forcing display of UNCATEGORIZED for category_id=1 in row {r} (is_pending={is_pending})")
+                        row_data['category'] = forced_name
+                        debug_print('CATEGORY', f"REFRESH FIX: Forcing display of {forced_name} for category_id={row_data['category_id']} in row {r} (is_pending={is_pending})")
                     # If we have a category ID instead of a name, look up the name
                     elif isinstance(value, int):
                         for cat in self._categories_data:
@@ -2452,8 +2720,18 @@ class ExpenseTrackerGUI(QMainWindow):
                                         QTimer.singleShot(0, self._load_dropdown_data)
 
                 item.setText(display_text)
-                item.setFont(font)
-                item.setForeground(color_text)
+
+                # Apply special styling for description field - smaller, grayer text
+                if key == 'transaction_description':
+                    description_font = QFont('Segoe UI', 10)  # Smaller font
+                    description_font.setItalic(True)  # Italic for less prominence
+                    item.setFont(description_font)
+                    item.setForeground(QColor('#a0a0a0'))  # Lighter gray color
+
+                    # No longer adding the [...] indicator since we have the Edit button
+                else:
+                    item.setFont(font)
+                    item.setForeground(color_text)
 
                 # Determine cell background color
                 cell_bg = row_base_color # Start with row base
@@ -2720,7 +2998,14 @@ class ExpenseTrackerGUI(QMainWindow):
             print("========================\n")
 
     def _update_button_states(self):
+        # Check for any changes in transactions or pending rows
         has_changes = bool(self.pending) or bool(self.dirty)
+
+        # Debug output to help diagnose issues
+        debug_print('TRANSACTION_EDIT', f"_update_button_states: pending={bool(self.pending)}, dirty={bool(self.dirty)}")
+        debug_print('TRANSACTION_EDIT', f"_update_button_states: dirty rows={self.dirty}")
+
+        # Enable save and discard buttons if there are changes
         self.save_btn.setEnabled(has_changes)
         self.discard_btn.setEnabled(has_changes)
         self.clear_btn.setEnabled(bool(self.pending))
@@ -2731,6 +3016,10 @@ class ExpenseTrackerGUI(QMainWindow):
         empty_row_idx = num_transactions + num_pending
         can_delete = any(row_idx < empty_row_idx for row_idx in self.selected_rows)
         self.del_btn.setEnabled(can_delete)
+
+        # Enable edit button if exactly one valid data row is selected
+        can_edit = len(self.selected_rows) == 1 and list(self.selected_rows)[0] < empty_row_idx
+        self.edit_btn.setEnabled(can_edit)
 
         # Update undo/redo actions (if connected to menu/toolbar)
         # undo_action.setEnabled(self.undo_stack.canUndo())
@@ -2953,6 +3242,10 @@ class ExpenseTrackerGUI(QMainWindow):
 
                             return True  # Handled
 
+                        # Edit button handling removed - now using dedicated button
+
+                        # Description field [...] button handling removed - now using dedicated Edit button
+
                         # Otherwise, if it's a dropdown/date column and not the empty row, just start editing
                         elif (is_dropdown_column or is_date_column) and row < empty_row_index:
                             # Set current cell and start editing
@@ -3012,7 +3305,7 @@ class ExpenseTrackerGUI(QMainWindow):
 
 def show_debug_menu():
     """Show the debug configuration menu."""
-    from debug_control import show_debug_menu
+    from financial_tracker_app.utils.debug_config import show_debug_menu
     show_debug_menu()
 
 if __name__ == '__main__':
@@ -3030,4 +3323,4 @@ if __name__ == '__main__':
     gui.show()
     sys.exit(app.exec())
 
-# --- END OF FILE expense_tracker_gui.py ---
+# --- END OF FILE main_window.py ---

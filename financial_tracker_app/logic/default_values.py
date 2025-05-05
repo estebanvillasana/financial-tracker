@@ -8,7 +8,7 @@ import os
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from PyQt6.QtCore import QDate
-from PyQt6.QtWidgets import QLineEdit, QComboBox, QDateEdit
+from PyQt6.QtWidgets import QLineEdit, QComboBox, QDateEdit, QTextEdit
 
 from financial_tracker_app.utils.debug_config import debug_config, debug_print
 
@@ -143,6 +143,8 @@ class DefaultValues:
                                 debug_print('DEFAULTS', f"  Warning: Default ID '{value_id}' not found in QComboBox '{field_key}'")
                         except (ValueError, TypeError):
                             debug_print('DEFAULTS', f"  Warning: Invalid ID format '{default_value}' for QComboBox '{field_key}'")
+
+                # QTextEdit handling removed - now using QLineEdit for descriptions
 
                 elif isinstance(widget, QDateEdit):
                     # Date is stored as ISO string "yyyy-MM-dd"

@@ -23,7 +23,7 @@ class ColumnAlignment(Enum):
 
 class ColumnConfig:
     """Configuration for a single column in the transaction table"""
-    
+
     def __init__(
         self,
         db_field: str,
@@ -56,12 +56,9 @@ TRANSACTION_COLUMNS = [
         width_percent=10,
     ),
     ColumnConfig(
-        db_field="transaction_value",
-        display_title="Value",
+        db_field="transaction_description",
+        display_title="Description",
         width_percent=15,
-        alignment=ColumnAlignment.RIGHT,
-        format_decimals=2,
-        show_currency=True,
     ),
     ColumnConfig(
         db_field="account",
@@ -76,28 +73,31 @@ TRANSACTION_COLUMNS = [
         width_percent=8,
     ),
     ColumnConfig(
+        db_field="transaction_value",
+        display_title="Value",
+        width_percent=12,
+        alignment=ColumnAlignment.RIGHT,
+        format_decimals=2,
+        show_currency=True,
+    ),
+    ColumnConfig(
         db_field="category",
         display_title="Category",
-        width_percent=15,
+        width_percent=12,
         id_field="category_id",
         lookup_source="_categories_data"
     ),
     ColumnConfig(
         db_field="sub_category",
         display_title="Sub Category",
-        width_percent=15,
+        width_percent=12,
         id_field="sub_category_id",
         lookup_source="_subcategories_data"
     ),
     ColumnConfig(
-        db_field="transaction_description",
-        display_title="Description",
-        width_percent=12,
-    ),
-    ColumnConfig(
         db_field="transaction_date",
         display_title="Date",
-        width_percent=12,
+        width_percent=10,
     ),
 ]
 
