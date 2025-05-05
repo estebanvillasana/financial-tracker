@@ -1,0 +1,8 @@
+{
+    "min_hours_between_backups": 24,
+    "max_daily_backups": 2,
+    "max_weekly_backups": 7,
+    "max_monthly_backups": 10,
+    "max_yearly_backups": 30,
+    "last_backup_time": 1746404330.8907282
+}

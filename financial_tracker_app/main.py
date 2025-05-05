@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import QApplication
 from financial_tracker_app.gui.main_window import ExpenseTrackerGUI
 from financial_tracker_app.gui.custom_style import CustomProxyStyle
 from financial_tracker_app.utils.debug_control import show_debug_menu
+from financial_tracker_app.utils.auto_backup import run_auto_backup
 
 def main():
     """Main function to run the application."""
@@ -13,6 +14,10 @@ def main():
     # Apply the custom style to the entire application
     custom_style = CustomProxyStyle()
     app.setStyle(custom_style)
+    
+    # Run automatic database backup
+    print("Checking for automatic database backup...")
+    run_auto_backup()
 
     # Add debug menu option
     if len(sys.argv) > 1 and sys.argv[1] == '--debug':
