@@ -563,86 +563,76 @@ class SpreadsheetDelegate(QStyledItemDelegate):
             painter.restore()
 
     def displayText(self, value, locale) -> str:
-        # Basic type formatting only. Currency/context-specific formatting
-        # is handled by main_window.py setting the item text directly.
-
+        """Converts values to displayable text, handling special cases like UNCATEGORIZED categories."""
+        # Handle Decimal values (monetary values)
         if isinstance(value, Decimal):
-            # Use default locale formatting for decimals here
             try:
-                # Determine decimals based on column config if possible, default to 2
-                decimals = 2
-                # We need the column key, but displayText doesn't get the index.
-                # This part is problematic without the index.
-                # For simplicity, always use 2 decimals here.
-                # More specific formatting is done in main_window.py.
-                formatted_value = self.locale.toString(float(value), 'f', decimals)
-                return formatted_value
-            except Exception as e:
-                print(f"Error formatting decimal value in displayText: {e}")
-                return "Error" # Fallback display
-
+                return self.locale.toString(float(value), 'f', 2)
+            except Exception:
+                pass  # Fall through to default handling
+                
+        # Handle integer IDs with special case handling through CategoryManager
+        if isinstance(value, int) and self.parent_window:
+            # Check if this is a category ID using CategoryManager
+            if self.parent_window.category_manager.is_uncategorized_category(value):
+                return 'UNCATEGORIZED'
+                
+            # For normal category IDs, do a standard lookup
+            for cat in self.categories_list:
+                if cat['id'] == value:
+                    return cat['name']
+                    
+            # For subcategory IDs
+            for subcat in self.subcategories_list:
+                if subcat['id'] == value:
+                    return subcat['name']
+                    
+            # For account IDs
+            for acc in self.accounts_list:
+                if acc['id'] == value:
+                    return acc['name']
+        
+        # Handle string values that might be numeric IDs
+        if isinstance(value, str) and value.isdigit():
+            try:
+                int_value = int(value)
+                # Check if this is an UNCATEGORIZED category ID
+                if self.parent_window and self.parent_window.category_manager.is_uncategorized_category(int_value):
+                    return 'UNCATEGORIZED'
+                
+                # Try lookups in other lists
+                for cat in self.categories_list:
+                    if cat['id'] == int_value:
+                        return cat['name']
+                        
+                for subcat in self.subcategories_list:
+                    if subcat['id'] == int_value:
+                        return subcat['name']
+                        
+                for acc in self.accounts_list:
+                    if acc['id'] == int_value:
+                        return acc['name']
+            except (ValueError, TypeError):
+                pass  # If conversion fails, continue to default return
+                
+        # Handle dates - convert ISO format to locale format
         if isinstance(value, str) and len(value) == 10 and value.count('-') == 2:
-            # Format dates consistently
             try:
                 date = QDate.fromString(value, "yyyy-MM-dd")
                 if date.isValid():
                     return date.toString("dd MMM yyyy")
             except Exception:
                 pass # Ignore formatting errors, return original string
-
-        # Handle ID lookups for display (Account, Category, SubCategory)
-        if isinstance(value, int) and self.parent_window:
-            # This requires knowing which column we are displaying.
-            # This logic is complex without the index.
-            # It's better handled by main_window setting the display text.
-            # Return a generic ID representation here as a fallback.
-            # The main window should override this with the correct name.
-            # Check if it's likely an ID based on known dropdown data
-            is_account_id = any(acc['id'] == value for acc in self.accounts_list)
-            is_category_id = any(cat['id'] == value for cat in self.categories_list)
-            is_subcategory_id = any(subcat['id'] == value for subcat in self.subcategories_list)
-
-            if is_account_id:
-                 name = self._find_name_for_id('account', value)
-                 return name if name else f"AccID:{value}"
-            if is_category_id:
-                 # SPECIAL CASE: Handle ID conflicts using the parent window's mapping
-                 if self.parent_window and hasattr(self.parent_window, '_id_conflict_mapping'):
-                     if 'category' in self.parent_window._id_conflict_mapping and value in self.parent_window._id_conflict_mapping['category']:
-                         forced_name = self.parent_window._id_conflict_mapping['category'][value]
-                         debug_print('CATEGORY', f"DELEGATE FIX: Forcing display of {forced_name} for category_id={value}")
-                         return forced_name
-
-                 # Fallback for backward compatibility
-                 if value == 1:
-                     debug_print('CATEGORY', f"DELEGATE FIX: Forcing display of UNCATEGORIZED for category_id=1")
-                     return 'UNCATEGORIZED'
-
-                 name = self._find_name_for_id('category', value)
-                 return name if name else f"CatID:{value}"
-            if is_subcategory_id:
-                 name = self._find_name_for_id('sub_category', value)
-                 return name if name else f"SubCatID:{value}"
-            # If it's an int but not a known ID, display it as such
-            # return f"ID:{value}" # Or just the string value?
-
+                
         # Default: return string representation
         return str(value) if value is not None else ""
 
     def _find_name_for_id(self, field_type, item_id, context=None):
         """Helper to find name for ID within the delegate."""
-        if item_id is None: return ""
         try:
-            # SPECIAL CASE: Handle ID conflicts using the parent window's mapping
-            if field_type == 'category' and self.parent_window and hasattr(self.parent_window, '_id_conflict_mapping'):
-                if 'category' in self.parent_window._id_conflict_mapping and item_id in self.parent_window._id_conflict_mapping['category']:
-                    forced_name = self.parent_window._id_conflict_mapping['category'][item_id]
-                    debug_print('CATEGORY', f"FIND_NAME_FOR_ID FIX: Forcing display of {forced_name} for category_id={item_id}")
-                    return forced_name
-
-            # Fallback for backward compatibility
+            # Explicitly handle the special case for ID conflicts - do this first!
             if field_type == 'category' and item_id == 1:
-                debug_print('CATEGORY', f"FIND_NAME_FOR_ID FIX: Forcing display of UNCATEGORIZED for category_id=1")
+                debug_print('CATEGORY', f"_find_name_for_id: CRITICALLY IMPORTANT - Forcing display of UNCATEGORIZED for category_id=1")
                 return 'UNCATEGORIZED'
 
             if field_type == 'account':

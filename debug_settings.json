@@ -8,5 +8,6 @@
     "CURRENCY": true,
     "DROPDOWN": true,
     "FOREIGN_KEYS": true,
-    "CLICK_DETECTION": true
+    "CLICK_DETECTION": true,
+    "TRANSACTION_EDIT": true
 }
