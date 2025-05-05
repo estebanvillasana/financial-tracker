@@ -1,13 +1,15 @@
 ### UX/UI
 - [ ] **Add Transactions Screen**
-	- [ ] *Bugs*
-		- [ ] Shows bank account when selecting UNCATEGORIZED
-		- [ ] Clicking on dropdowns or dates doesn't open what it should
+
         
 	- [ ] **Grid**
-		- [ ] Description field
-			- [ ] Should have smaller font and a different color that makes it look less in hierarchy
-			- [ ] I want to open it to edit it
+    	- [ ] *Bugs*
+    		- [x] Shows bank account when selecting UNCATEGORIZED
+    		- [ ] Clicking on dropdowns or dates doesn't open what it should
+    		- [ ] When edditing a transaction the description field displays, for example, "$ 0.00", for some reason.
+		- [x] Description field
+			- [x] Should have smaller font and a different color that makes it look less in hierarchy
+			- [x] I want to open it to edit it
 		- [ ] Expenses and Income should have colors
 		- [ ] Transfers should be hidden, there is a screen for that
 		- [ ] Value field should show the currency symbol
