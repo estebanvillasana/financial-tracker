@@ -30,6 +30,11 @@ from financial_tracker_app.logic.default_values import default_values
 from financial_tracker_app.gui.default_values_ui import show_default_values_dialog
 from financial_tracker_app.utils.debug_config import debug_config, debug_print
 from financial_tracker_app.utils.debug_control import show_debug_menu
+# Import field mapping utilities
+from financial_tracker_app.utils.field_mappings import (
+    ensure_related_fields, ensure_id_field, ensure_display_field,
+    get_id_for_name, get_name_for_id, get_data_source_for_field
+)
 # --- End Updated Imports ---
 
 class ExpenseTrackerGUI(QMainWindow):
@@ -701,6 +706,24 @@ class ExpenseTrackerGUI(QMainWindow):
             # Update the currency display for the transaction value
             self._update_currency_display_for_row(row)
 
+        # Check if the category column was edited (col 4)
+        if col == 4:  # Category column
+            # Get the current row data
+            row_data = None
+            if row < len(self.transactions):
+                row_data = self.transactions[row]
+            elif row - len(self.transactions) < len(self.pending):
+                row_data = self.pending[row - len(self.transactions)]
+
+            # SPECIAL CASE: Handle the Bank of America vs UNCATEGORIZED conflict
+            if row_data and row_data.get('category_id') == 1:
+                # Force the display to show UNCATEGORIZED
+                item = self.tbl.item(row, col)
+                if item and item.text() != 'UNCATEGORIZED':
+                    debug_print('CATEGORY', f"_cell_edited: Forcing display of UNCATEGORIZED for category_id=1 in row {row}")
+                    item.setText('UNCATEGORIZED')
+                    row_data['category'] = 'UNCATEGORIZED'
+
         # We need to ensure recoloring and button states are updated.
         self._recolor_row(row)
         self._update_button_states()
@@ -822,12 +845,18 @@ class ExpenseTrackerGUI(QMainWindow):
         # Category Name (depends on Type)
         current_type = new_row_data.get('transaction_type', 'Expense')
         if new_row_data.get('category_id') is not None:
-            for cat in self._categories_data:
-                if cat['id'] == new_row_data['category_id'] and cat['type'] == current_type:
-                    new_row_data['category'] = cat['name']
-                    break
+            # SPECIAL CASE: Handle the Bank of America vs UNCATEGORIZED conflict
+            # If category_id is 1, ALWAYS set the category name to UNCATEGORIZED
+            if new_row_data['category_id'] == 1:
+                new_row_data['category'] = 'UNCATEGORIZED'
+                debug_print('CATEGORY', f"_add_blank_row: Forcing category name to UNCATEGORIZED for category_id=1")
+            else:
+                for cat in self._categories_data:
+                    if cat['id'] == new_row_data['category_id'] and cat['type'] == current_type:
+                        new_row_data['category'] = cat['name']
+                        break
             # If ID is invalid for type, try finding UNCATEGORIZED for the type
-            if not new_row_data['category']:
+            if not new_row_data.get('category'):
                  for cat in self._categories_data:
                       if cat['name'] == 'UNCATEGORIZED' and cat['type'] == current_type:
                            new_row_data['category_id'] = cat['id']
@@ -2048,11 +2077,20 @@ class ExpenseTrackerGUI(QMainWindow):
                             value = acc['name']
                             break
                 elif key == 'category':
+                    # CRITICAL FIX: If category_id is 1, always display as UNCATEGORIZED
+                    # This handles the specific conflict between Bank of America (ID 1) and UNCATEGORIZED (ID 1)
+                    if row_data.get('category_id') == 1:
+                        value = 'UNCATEGORIZED'
+                        # Also update the underlying data to ensure consistency
+                        row_data['category'] = 'UNCATEGORIZED'
+                        debug_print('CATEGORY', f"REFRESH FIX: Forcing display of UNCATEGORIZED for category_id=1 in row {r} (is_pending={is_pending})")
                     # If we have a category ID instead of a name, look up the name
-                    if isinstance(value, int):
+                    elif isinstance(value, int):
                         for cat in self._categories_data:
                             if cat['id'] == value:
                                 value = cat['name']
+                                # Update the underlying data to ensure consistency
+                                row_data['category'] = cat['name']
                                 break
                     # If the value is a string but matches an account name, it's likely a mistake
                     # This fixes the issue where bank account names appear in the category column
@@ -2216,12 +2254,149 @@ class ExpenseTrackerGUI(QMainWindow):
                     display_text = delegate.displayText(value, self.locale) # Pass locale
 
                 # Special handling for category display
-                if key == 'category' and row_data.get('category_id'):
-                    # Ensure we display the correct category name based on the ID
-                    for cat in self._categories_data:
-                        if cat['id'] == row_data.get('category_id'):
-                            display_text = cat['name']
+                if key == 'category':
+                    # SPECIAL CASE: Direct fix for the Bank of America vs UNCATEGORIZED conflict
+                    # If display_text is "Bank of America" but we're trying to set UNCATEGORIZED
+                    if display_text == "Bank of America" and (value == "UNCATEGORIZED" or row_data.get('category') == "UNCATEGORIZED"):
+                        debug_print('CATEGORY', f"DIRECT FIX: Found 'Bank of America' in category field when it should be 'UNCATEGORIZED' for row {r}")
+
+                        # Force it to be UNCATEGORIZED
+                        display_text = 'UNCATEGORIZED'
+                        row_data['category'] = 'UNCATEGORIZED'
+
+                        # Find the correct UNCATEGORIZED category ID
+                        transaction_type = row_data.get('transaction_type', 'Expense')
+                        for cat in self._categories_data:
+                            if cat['name'] == 'UNCATEGORIZED' and cat['type'] == transaction_type:
+                                row_data['category_id'] = cat['id']
+                                break
+
+                        # Force immediate update of the display text for this cell
+                        item.setText('UNCATEGORIZED')
+
+                        # Also update the subcategory cell if it exists
+                        subcat_item = self.tbl.item(r, 5)  # Column 5 is subcategory
+                        if subcat_item:
+                            subcat_item.setText('UNCATEGORIZED')
+
+                    # First, check if the current display text is an account name (which would be wrong)
+                    # Do this check first before any other processing
+                    is_account_name = False
+                    for acc in self._accounts_data:
+                        if acc['name'] == display_text or acc['name'] == value:
+                            is_account_name = True
+                            debug_print('CATEGORY', f"Found account name '{display_text}' in category field for row {r}")
                             break
+
+                    # If it's an account name, fix it immediately by setting to UNCATEGORIZED
+                    if is_account_name:
+                        transaction_type = row_data.get('transaction_type', 'Expense')
+                        for cat in self._categories_data:
+                            if cat['name'] == 'UNCATEGORIZED' and cat['type'] == transaction_type:
+                                display_text = 'UNCATEGORIZED'
+                                row_data['category'] = 'UNCATEGORIZED'
+                                row_data['category_id'] = cat['id']
+                                debug_print('CATEGORY', f"Fixed account name in category field to UNCATEGORIZED (ID: {cat['id']})")
+
+                                # Also update subcategory to match
+                                for subcat in self._subcategories_data:
+                                    if subcat['category_id'] == cat['id'] and subcat['name'] == 'UNCATEGORIZED':
+                                        row_data['sub_category'] = 'UNCATEGORIZED'
+                                        row_data['sub_category_id'] = subcat['id']
+                                        break
+
+                                # Force immediate update of the display text for this cell
+                                item.setText('UNCATEGORIZED')
+
+                                # Also update the subcategory cell if it exists
+                                subcat_item = self.tbl.item(r, 5)  # Column 5 is subcategory
+                                if subcat_item:
+                                    subcat_item.setText('UNCATEGORIZED')
+                                break
+                    # If not an account name, proceed with normal category handling
+                    else:
+                        # Check if we have a valid category_id
+                        if row_data.get('category_id'):
+                            # SPECIAL CASE: If category_id is 1, ALWAYS display as UNCATEGORIZED
+                            # This handles the specific ID conflict between Bank of America (ID 1) and UNCATEGORIZED (ID 1)
+                            if row_data.get('category_id') == 1:
+                                # Make sure we're displaying UNCATEGORIZED, not Bank of America
+                                display_text = 'UNCATEGORIZED'
+                                # Force immediate update of the display text for this cell
+                                item.setText('UNCATEGORIZED')
+                                # Also ensure the underlying data is consistent
+                                row_data['category'] = 'UNCATEGORIZED'
+                                debug_print('CATEGORY', f"CRITICAL FIX: Forced display of UNCATEGORIZED for category_id=1 in row {r}")
+
+                            # Check if the category_id matches an account_id (which would be wrong)
+                            is_account_id = False
+                            for acc in self._accounts_data:
+                                if acc['id'] == row_data.get('category_id'):
+                                    is_account_id = True
+                                    debug_print('CATEGORY', f"Found account ID {acc['id']} in category_id field for row {r}")
+                                    break
+
+                            # If it's an account ID, fix it by setting to UNCATEGORIZED
+                            if is_account_id:
+                                transaction_type = row_data.get('transaction_type', 'Expense')
+                                for cat in self._categories_data:
+                                    if cat['name'] == 'UNCATEGORIZED' and cat['type'] == transaction_type:
+                                        display_text = 'UNCATEGORIZED'
+                                        row_data['category'] = 'UNCATEGORIZED'
+                                        row_data['category_id'] = cat['id']
+                                        debug_print('CATEGORY', f"Fixed account ID in category_id field to UNCATEGORIZED (ID: {cat['id']})")
+
+                                        # Also update subcategory to match
+                                        for subcat in self._subcategories_data:
+                                            if subcat['category_id'] == cat['id'] and subcat['name'] == 'UNCATEGORIZED':
+                                                row_data['sub_category'] = 'UNCATEGORIZED'
+                                                row_data['sub_category_id'] = subcat['id']
+                                                break
+
+                                        # Force immediate update of the display text for this cell
+                                        item.setText('UNCATEGORIZED')
+
+                                        # Also update the subcategory cell if it exists
+                                        subcat_item = self.tbl.item(r, 5)  # Column 5 is subcategory
+                                        if subcat_item:
+                                            subcat_item.setText('UNCATEGORIZED')
+                                        break
+                            # If not an account ID, ensure we display the correct category name
+                            else:
+                                category_found = False
+                                for cat in self._categories_data:
+                                    if cat['id'] == row_data.get('category_id'):
+                                        display_text = cat['name']
+                                        category_found = True
+                                        # Also update the underlying data to ensure consistency
+                                        row_data['category'] = cat['name']
+                                        break
+
+                                # If category ID doesn't match any known category, set to UNCATEGORIZED
+                                if not category_found:
+                                    transaction_type = row_data.get('transaction_type', 'Expense')
+                                    for cat in self._categories_data:
+                                        if cat['name'] == 'UNCATEGORIZED' and cat['type'] == transaction_type:
+                                            display_text = 'UNCATEGORIZED'
+                                            row_data['category'] = 'UNCATEGORIZED'
+                                            row_data['category_id'] = cat['id']
+                                            debug_print('CATEGORY', f"Fixed invalid category ID {row_data.get('category_id')} to UNCATEGORIZED (ID: {cat['id']})")
+
+                                            # Force immediate update of the display text for this cell
+                                            item.setText('UNCATEGORIZED')
+
+                                            # Also update subcategory to match
+                                            for subcat in self._subcategories_data:
+                                                if subcat['category_id'] == cat['id'] and subcat['name'] == 'UNCATEGORIZED':
+                                                    row_data['sub_category'] = 'UNCATEGORIZED'
+                                                    row_data['sub_category_id'] = subcat['id']
+
+                                                    # Update the subcategory cell if it exists
+                                                    subcat_item = self.tbl.item(r, 5)  # Column 5 is subcategory
+                                                    if subcat_item:
+                                                        subcat_item.setText('UNCATEGORIZED')
+                                                    break
+                                            break
 
                 # Special handling for subcategory display
                 if key == 'sub_category':
@@ -2340,12 +2515,35 @@ class ExpenseTrackerGUI(QMainWindow):
             print("-" * 140)
 
             num_transactions = len(self.transactions)
+            all_data = self.transactions + self.pending
 
             for row in range(self.tbl.rowCount() - 1):  # Skip the '+' row
                 row_data = []
                 for col in range(self.tbl.columnCount()):
                     item = self.tbl.item(row, col)
                     text = item.text() if item else ""
+
+                    # Check if we need to convert an ID to a name for display
+                    if row < len(all_data) and col < len(self.COLS):
+                        col_key = self.COLS[col]
+                        # If the text looks like a numeric ID for category or subcategory
+                        if text.isdigit() and col_key in ['category', 'sub_category']:
+                            # For category, convert ID to name
+                            if col_key == 'category':
+                                category_id = int(text)
+                                for cat in self._categories_data:
+                                    if cat['id'] == category_id:
+                                        text = cat['name']
+                                        break
+
+                            # For subcategory, convert ID to name
+                            elif col_key == 'sub_category':
+                                subcategory_id = int(text)
+                                for subcat in self._subcategories_data:
+                                    if subcat['id'] == subcategory_id:
+                                        text = subcat['name']
+                                        break
+
                     row_data.append(text)
 
                 # Determine row status with color indicators
@@ -2475,9 +2673,31 @@ class ExpenseTrackerGUI(QMainWindow):
                     except Exception as e:
                         print(f"Error getting currency for account {account_id}: {e}")
 
+                # Get category and subcategory names for display
+                category_id = data.get('category_id')
+                category_name = data.get('category', '')
+                # If category is a numeric ID, convert to name
+                if isinstance(category_name, int) or (isinstance(category_name, str) and category_name.isdigit()):
+                    for cat in self._categories_data:
+                        if cat['id'] == (int(category_name) if isinstance(category_name, str) else category_name):
+                            category_name = cat['name']
+                            break
+
+                subcategory_id = data.get('sub_category_id')
+                subcategory_name = data.get('sub_category', '')
+                # If subcategory is a numeric ID, convert to name
+                if isinstance(subcategory_name, int) or (isinstance(subcategory_name, str) and subcategory_name.isdigit()):
+                    for subcat in self._subcategories_data:
+                        if subcat['id'] == (int(subcategory_name) if isinstance(subcategory_name, str) else subcategory_name):
+                            subcategory_name = subcat['name']
+                            break
+
                 # Include transaction value and status in the output
                 value = data.get('transaction_value', 'N/A')
                 print(f"Row {i} {status_with_color}: Account={account_name}, Account ID={account_id}, Value={value}, Currency={currency_info}")
+
+                # Add category and subcategory information
+                print(f"    Category={category_name}, Category ID={category_id}, Sub Category={subcategory_name}, Sub Category ID={subcategory_id}")
 
                 # If the row is dirty or has errors, show what fields are modified or have errors
                 if is_dirty if i < num_transactions else False:

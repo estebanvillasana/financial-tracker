@@ -1,11 +1,12 @@
 {
-    "TABLE_DISPLAY": false,
-    "UNDERLYING_DATA": false,
-    "DATE_ARROWS": false,
-    "ACCOUNT_CONVERSION": false,
-    "SUBCATEGORY": false,
-    "CURRENCY": false,
-    "DROPDOWN": false,
-    "FOREIGN_KEYS": false,
-    "CLICK_DETECTION": false
+    "TABLE_DISPLAY": true,
+    "UNDERLYING_DATA": true,
+    "DATE_ARROWS": true,
+    "ACCOUNT_CONVERSION": true,
+    "SUBCATEGORY": true,
+    "CATEGORY": true,
+    "CURRENCY": true,
+    "DROPDOWN": true,
+    "FOREIGN_KEYS": true,
+    "CLICK_DETECTION": true
 }

@@ -4,6 +4,7 @@
     "DATE_ARROWS": false,
     "ACCOUNT_CONVERSION": false,
     "SUBCATEGORY": false,
+    "CATEGORY": false,
     "CURRENCY": false,
     "DROPDOWN": false,
     "FOREIGN_KEYS": false,

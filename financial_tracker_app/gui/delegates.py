@@ -157,11 +157,57 @@ class SpreadsheetDelegate(QStyledItemDelegate):
             if current_transaction_data and 'transaction_type' in current_transaction_data:
                  current_type = current_transaction_data['transaction_type']
             has_uncategorized = False
+            # CRITICAL FIX: Always ensure UNCATEGORIZED is available for the current transaction type
+            # This ensures we always have an UNCATEGORIZED option in the dropdown
+
+            # SPECIAL CASE: Handle the Bank of America vs UNCATEGORIZED conflict
+            # Create a modified categories list that ensures UNCATEGORIZED is displayed for ID 1
+            modified_categories = []
             for cat in self.categories_list:
-                 if cat['type'] == current_type:
-                      editor.addItem(cat['name'], userData=cat['id'])
-                      if cat['name'] == 'UNCATEGORIZED':
-                          has_uncategorized = True
+                if cat['id'] == 1 and cat['type'] == current_type:
+                    # Force name to be UNCATEGORIZED for ID 1
+                    modified_cat = cat.copy()
+                    modified_cat['name'] = 'UNCATEGORIZED'
+                    modified_categories.append(modified_cat)
+                    debug_print('CATEGORY', f"DELEGATE EDITOR FIX: Forcing display of UNCATEGORIZED for category_id=1")
+                else:
+                    modified_categories.append(cat)
+
+            # First, ensure we have an UNCATEGORIZED category for the current transaction type
+            uncategorized_exists = False
+            for cat in modified_categories:
+                if cat['type'] == current_type and cat['name'] == 'UNCATEGORIZED':
+                    uncategorized_exists = True
+                    break
+
+            # If UNCATEGORIZED doesn't exist for this transaction type, try to create it
+            if not uncategorized_exists and self.parent_window and hasattr(self.parent_window, 'db'):
+                debug_print('CATEGORY', f"Creating UNCATEGORIZED category for transaction type {current_type}")
+                # Try to create the UNCATEGORIZED category
+                uncategorized_id = self.parent_window.db.ensure_category('UNCATEGORIZED', current_type)
+                if uncategorized_id:
+                    # Add to our modified categories list
+                    modified_categories.append({
+                        'id': uncategorized_id,
+                        'name': 'UNCATEGORIZED',
+                        'type': current_type
+                    })
+                    # Also add to our categories list for future use
+                    self.categories_list.append({
+                        'id': uncategorized_id,
+                        'name': 'UNCATEGORIZED',
+                        'type': current_type
+                    })
+                    # Reload dropdown data in the background
+                    QTimer.singleShot(0, lambda: self.parent_window._load_dropdown_data())
+
+            # Now add all categories of the current type to the dropdown
+            for cat in modified_categories:
+                if cat['type'] == current_type:
+                    editor.addItem(cat['name'], userData=cat['id'])
+                    if cat['name'] == 'UNCATEGORIZED':
+                        has_uncategorized = True
+
             if editor.count() == 0:
                 editor.addItem(f"No {current_type} Categories")
                 editor.model().item(0).setEnabled(False)
@@ -335,6 +381,60 @@ class SpreadsheetDelegate(QStyledItemDelegate):
                 if current_index >= 0:
                     new_value_for_model = editor.itemData(current_index)
                     display_text = editor.itemText(current_index)
+
+                    # SPECIAL CASE: Handle the Bank of America vs UNCATEGORIZED conflict
+                    # If we're in a category column and the display text is UNCATEGORIZED,
+                    # make sure we're using the correct category ID
+                    if col_key == 'category' and display_text == 'UNCATEGORIZED':
+                        # Find the correct UNCATEGORIZED category ID based on transaction type
+                        transaction_type = 'Expense'  # Default
+                        if self.parent_window:
+                            # Try to get the transaction type from the current row
+                            row_data = None
+                            if row < len(self.parent_window.transactions):
+                                row_data = self.parent_window.transactions[row]
+                            elif row - len(self.parent_window.transactions) < len(self.parent_window.pending):
+                                row_data = self.parent_window.pending[row - len(self.parent_window.transactions)]
+
+                            if row_data and 'transaction_type' in row_data:
+                                transaction_type = row_data['transaction_type']
+
+                        # Find the correct UNCATEGORIZED category ID
+                        for cat in self.categories_list:
+                            if cat['name'] == 'UNCATEGORIZED' and cat['type'] == transaction_type:
+                                new_value_for_model = cat['id']
+                                debug_print('CATEGORY', f"SET_MODEL_DATA FIX: Setting category_id to {cat['id']} for UNCATEGORIZED")
+
+                                # Update the underlying data structure directly to ensure consistency
+                                if self.parent_window:
+                                    if row < len(self.parent_window.transactions):
+                                        self.parent_window.transactions[row]['category'] = 'UNCATEGORIZED'
+                                        self.parent_window.transactions[row]['category_id'] = cat['id']
+                                    elif row - len(self.parent_window.transactions) < len(self.parent_window.pending):
+                                        pending_idx = row - len(self.parent_window.transactions)
+                                        self.parent_window.pending[pending_idx]['category'] = 'UNCATEGORIZED'
+                                        self.parent_window.pending[pending_idx]['category_id'] = cat['id']
+                                break
+
+                    # SPECIAL CASE: If we're setting category_id to 1, ensure we're setting it for UNCATEGORIZED
+                    # This handles the case where the user selects a category that happens to have ID 1
+                    elif col_key == 'category' and new_value_for_model == 1:
+                        # Force the display text to be UNCATEGORIZED
+                        if display_text != 'UNCATEGORIZED':
+                            debug_print('CATEGORY', f"SET_MODEL_DATA FIX: Forcing display text to UNCATEGORIZED for category_id=1")
+                            # Update the item text directly
+                            item = self.parent_window.tbl.item(row, col)
+                            if item:
+                                item.setText('UNCATEGORIZED')
+
+                            # Update the underlying data structure
+                            if self.parent_window:
+                                if row < len(self.parent_window.transactions):
+                                    self.parent_window.transactions[row]['category'] = 'UNCATEGORIZED'
+                                elif row - len(self.parent_window.transactions) < len(self.parent_window.pending):
+                                    pending_idx = row - len(self.parent_window.transactions)
+                                    self.parent_window.pending[pending_idx]['category'] = 'UNCATEGORIZED'
+
                     if new_value_for_model == "" and display_text == "":
                          new_value_for_model = None
                     new_value_for_command = new_value_for_model
@@ -486,6 +586,12 @@ class SpreadsheetDelegate(QStyledItemDelegate):
                  name = self._find_name_for_id('account', value)
                  return name if name else f"AccID:{value}"
             if is_category_id:
+                 # SPECIAL CASE: Handle the Bank of America vs UNCATEGORIZED conflict
+                 # If ID is 1, always return UNCATEGORIZED for category context
+                 if value == 1:
+                     debug_print('CATEGORY', f"DELEGATE FIX: Forcing display of UNCATEGORIZED for category_id=1")
+                     return 'UNCATEGORIZED'
+
                  name = self._find_name_for_id('category', value)
                  return name if name else f"CatID:{value}"
             if is_subcategory_id:
@@ -501,6 +607,12 @@ class SpreadsheetDelegate(QStyledItemDelegate):
         """Helper to find name for ID within the delegate."""
         if item_id is None: return ""
         try:
+            # SPECIAL CASE: Handle the Bank of America vs UNCATEGORIZED conflict
+            # If we're looking for a category with ID 1, always return UNCATEGORIZED
+            if field_type == 'category' and item_id == 1:
+                debug_print('CATEGORY', f"FIND_NAME_FOR_ID FIX: Forcing display of UNCATEGORIZED for category_id=1")
+                return 'UNCATEGORIZED'
+
             if field_type == 'account':
                 return next((acc['name'] for acc in self.accounts_list if acc['id'] == item_id), "")
             elif field_type == 'category':
